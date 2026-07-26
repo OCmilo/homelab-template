@@ -62,7 +62,9 @@ def healthchecks_push(job_id: str, signal: str, message: str) -> None:
         pass
 
 
-def telegram_send(text: str) -> None:
+def telegram_send(text: str, topic: str | None = None) -> None:
+    """Post to a forum topic. Defaults to the finance topic; pass `topic` to
+    route elsewhere (e.g. the system topic for infrastructure jobs)."""
     token = ENV.get("TELEGRAM_BOT_TOKEN")
     chat = ENV.get("TELEGRAM_CHAT_ID")
     if not (token and chat):
@@ -70,7 +72,7 @@ def telegram_send(text: str) -> None:
     payload = urllib.parse.urlencode(
         {
             "chat_id": chat,
-            "message_thread_id": ENV.get("TELEGRAM_TOPIC_FINANCE", DEFAULT_FINANCE_TOPIC),
+            "message_thread_id": topic or ENV.get("TELEGRAM_TOPIC_FINANCE", DEFAULT_FINANCE_TOPIC),
             "text": text[:TELEGRAM_LIMIT],
         }
     ).encode()

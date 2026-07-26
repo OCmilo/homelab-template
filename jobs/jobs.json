@@ -339,6 +339,22 @@
       "grace_seconds": 600,
       "risk": "low",
       "monitoring": "active"
+    },
+    {
+      "id": "template-drift",
+      "name": "Template export drift check",
+      "authority": "launchd",
+      "source": "jobs/launchd/com.homelab.template-drift.plist",
+      "command": "scripts/template-drift.py",
+      "purpose": "Detect exported files that changed here but were never published to the homelab-template repo; report the paths to Telegram.",
+      "schedule": {
+        "type": "cron",
+        "expression": "30 9 * * 1"
+      },
+      "expected_duration_seconds": 30,
+      "grace_seconds": 900,
+      "risk": "low",
+      "monitoring": "active"
     }
   ]
 }
