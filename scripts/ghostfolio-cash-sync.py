@@ -31,8 +31,9 @@ def env_var(name, default=""):
     m = re.search(r"^{}=(.+)$".format(name), env, re.M)
     return m.group(1).strip() if m else default
 
-# Firefly account id -> Ghostfolio account name
-ACCOUNTS = {"6": "Revolut Checking", "3": "Revolut Savings", "664": "Revolut Credit Card"}
+# Firefly account id -> Ghostfolio account name, as JSON in .env:
+# GHOSTFOLIO_ACCOUNT_MAP={"12": "Checking", "13": "Savings"}
+ACCOUNTS = json.loads(env_var("GHOSTFOLIO_ACCOUNT_MAP", "{}"))
 
 def call(url, headers, payload=None, method=None):
     data = json.dumps(payload).encode() if payload is not None else None

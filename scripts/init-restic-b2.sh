@@ -12,7 +12,9 @@ ICLOUD_REPO="${HOME}/Library/Mobile Documents/com~apple~CloudDocs/homelab-backup
 
 env_value() {
   local key=$1
-  sed -n "s/^${key}=//p" "${HOMELAB}/.env" | tail -n 1
+  # Strip surrounding quotes: .env is also sourced by shell scripts, so values
+  # containing spaces are quoted there.
+  sed -n "s/^${key}=//p" "${HOMELAB}/.env" | tail -n 1 | sed -e 's/^"\(.*\)"$/\1/'
 }
 
 RESTIC_PASSWORD="$(env_value RESTIC_PASSWORD)"

@@ -95,9 +95,10 @@ without echoing it and writes the derived key into `.env`.
 Four assumptions are baked in deeply enough that changing them means editing
 code, not configuration. Read these before you deviate:
 
-- **The repo lives at `~/homelab`.** Host scripts default to it and the launchd
-  templates stamp it in. Export `HOMELAB=/your/path` for the shell scripts if
-  you clone elsewhere, and adjust `jobs/launchd/` accordingly.
+- **The repo defaults to `~/homelab`.** `scripts/install-jobs.sh` stamps the
+  real checkout path into the launchd agents, so those work anywhere, but the
+  host scripts fall back to `~/homelab` when `HOMELAB` is unset. Export
+  `HOMELAB=/your/path` (or clone to `~/homelab`) before running them.
 - **The compose project is named `homelab`.** Two volumes are declared
   `external: true` with literal names (`homelab_jellyfin-config`,
   `homelab_healthchecks-data`), and `scripts/backup-restic.sh` exports several
@@ -170,12 +171,15 @@ Validate the registry, then create the checks:
 
 ```bash
 python3 scripts/healthchecks-reconcile.py --registry jobs/jobs.json --validate-only
-docker compose exec healthchecks python /opt/homelab/scripts/healthchecks-bootstrap.py
+docker compose exec \
+  -e HEALTHCHECKS_ADMIN_PASSWORD='<temporary-password>' \
+  healthchecks python /opt/homelab/scripts/healthchecks-bootstrap.py
 docker compose exec healthchecks python /opt/homelab/scripts/healthchecks-reconcile.py
 ```
 
 Bootstrap creates the administrator, project, and API keys under
-`config/healthchecks/` (gitignored). Reconcile upserts checks by stable id and
+`config/healthchecks/` (gitignored). It requires the password to be passed in —
+change it in the UI after first login. Reconcile upserts checks by stable id and
 writes `config/healthchecks/ping-urls.env`, which the job scripts read to find
 their ping URLs. It never deletes checks it does not manage.
 

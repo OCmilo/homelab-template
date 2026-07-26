@@ -250,20 +250,6 @@ services:
       - "3000:3000"
     volumes:
       - ./config/homepage:/app/config
-      - ./assets/homepage-brand/apple-touch-icon.png:/app/public/apple-touch-icon.png:ro
-      - ./assets/homepage-brand/apple-touch-icon-precomposed.png:/app/public/apple-touch-icon-precomposed.png:ro
-      - ./assets/homepage-brand/android-chrome-192x192.png:/app/public/android-chrome-192x192.png:ro
-      - ./assets/homepage-brand/android-chrome-512x512.png:/app/public/android-chrome-512x512.png:ro
-      - ./assets/homepage-brand/favicon-16x16.png:/app/public/favicon-16x16.png:ro
-      - ./assets/homepage-brand/favicon-32x32.png:/app/public/favicon-32x32.png:ro
-      - ./assets/homepage-brand/homepage.ico:/app/public/favicon.ico:ro
-      - ./assets/homepage-brand/homepage.ico:/app/public/homepage.ico:ro
-      - ./assets/homepage-brand/mstile-70x70.png:/app/public/mstile-70x70.png:ro
-      - ./assets/homepage-brand/mstile-144x144.png:/app/public/mstile-144x144.png:ro
-      - ./assets/homepage-brand/mstile-150x150.png:/app/public/mstile-150x150.png:ro
-      - ./assets/homepage-brand/mstile-310x150.png:/app/public/mstile-310x150.png:ro
-      - ./assets/homepage-brand/mstile-310x310.png:/app/public/mstile-310x310.png:ro
-      - ./assets/homepage-brand/safari-pinned-tab.svg:/app/public/safari-pinned-tab.svg:ro
       - ${DATA_ROOT}:/data:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
     restart: unless-stopped
@@ -294,7 +280,8 @@ services:
     depends_on:
       - beszel
     env_file:
-      - ./config/beszel/agent.env
+      - path: ./config/beszel/agent.env
+        required: false
     environment:
       LISTEN: /beszel_socket/beszel.sock
       HUB_URL: http://beszel:8090

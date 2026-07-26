@@ -9,9 +9,10 @@ The stack is built for a single Mac running Colima. Every service is reachable
 at `https://<service>.<STACK_HOST>.<your-domain>` over your LAN or Tailscale,
 with real certificates and no ports forwarded to the internet.
 
-Nothing here is a demo. It is a running system with its incident history
-attached — the postmortems under `docs/postmortems/` are the reason several of
-the configuration choices below look the way they do.
+Nothing here is a demo. It is the generic half of a running system, and several
+of the configuration choices below look the way they do because the original
+broke and taught someone a lesson. Those rules are carried in
+[`docs/conventions.md`](docs/conventions.md).
 
 ## What's included
 
@@ -93,8 +94,7 @@ Remote access is Tailscale, not a public endpoint.
 Karakeep, Healthchecks, Beszel, CouchDB, and the Jellyfin config all use named
 Docker volumes, which are ext4 inside the VM. This is not a preference: host
 and guest SQLite do not share locks coherently across the virtiofs mount, and
-two databases were corrupted the day that was discovered
-(`docs/postmortems/2026-07-06-sqlite-over-colima.md`). The backup script works
+two databases were corrupted the day that was discovered. The backup script works
 around it by exporting consistent copies from inside the VM and by stopping the
 bind-mounted SQLite services for the few seconds the snapshot takes, rather
 than reading live database files from the host.
@@ -156,10 +156,9 @@ running `docker compose up` and working backwards.
   Healthchecks UI once.
 - **Telegram routing.** The stack assumes one bot posting into a forum-style
   supergroup with a closed General topic, so every message carries a thread id.
-  Those ids are set per sender — `TELEGRAM_TOPIC_TRIVY` and
-  `TELEGRAM_TOPIC_FINANCE` in `.env`, and hardcoded thread numbers in the Diun
-  service definition and `scripts/backup-restic.sh`. Point them at your own
-  topics or collapse them to one.
+  Set them in `.env`: `TELEGRAM_TOPIC_TRIVY`, `TELEGRAM_TOPIC_DIUN`,
+  `TELEGRAM_TOPIC_BACKUP`, `TELEGRAM_TOPIC_SYSTEM`, `TELEGRAM_TOPIC_FINANCE`.
+  Leave them unset to post to General, or point them all at one topic.
 - **Locale-shaped defaults.** Paperless OCR languages, the Ghostfolio sync
   currency, the registry timezone in `jobs/jobs.json`, and the subtitle
   translation target language are all set for one household. Change them.
@@ -171,10 +170,10 @@ running `docker compose up` and working backwards.
 
 Read this part before you commit a weekend to it.
 
-**macOS and Colima first.** Scheduled jobs are launchd plists, AdGuard Home is
-installed as a macOS LaunchDaemon, and the host scripts source Homebrew from
-the Intel prefix (`/usr/local/bin/brew`) — on Apple Silicon that line needs to
-become `/opt/homebrew/bin/brew`. Nothing here targets Linux without work.
+**macOS and Colima first.** Scheduled jobs are launchd plists and AdGuard Home
+is installed as a macOS LaunchDaemon. Host scripts resolve Homebrew from either
+the Apple Silicon or the Intel prefix, so both work, but nothing here targets
+Linux without work.
 
 **The repo is expected at `~/homelab`.** Host scripts and the rendered launchd
 plists resolve paths from `$HOME/homelab`. Cloning somewhere else means editing
@@ -195,8 +194,8 @@ the Enable Banking path assumes an account with a PSD2 provider and consents
 that expire every 90 days; the IBKR sync assumes an Interactive Brokers Flex
 Query. The wiki agent assumes you use Obsidian, that the `codex` CLI is
 installed on the host, and that you are willing to pay for model calls. The
-checked-in Firefly rules and merchant map are one household's, offered as a
-starting point rather than a default.
+checked-in Firefly rules and merchant map ship empty — export your own with
+`scripts/firefly-rules-sync.py --export` once your rules exist.
 
 **No multi-user or hardening story.** Services are single-user, most have
 signups disabled, and there is no SSO, no per-service authorization model, and
@@ -224,9 +223,8 @@ laws where you live.
 authoritative for which fact — a rule worth keeping, since duplicated
 documentation is how the original drifted. The pieces most worth reading before
 you change anything are
-[`docs/job-monitoring.md`](docs/job-monitoring.md),
-[`docs/finance-stack.md`](docs/finance-stack.md),
-[`jobs/README.md`](jobs/README.md), and
-[`docs/postmortems/`](docs/postmortems/).
+[`docs/conventions.md`](docs/conventions.md),
+[`docs/job-monitoring.md`](docs/job-monitoring.md), and
+[`jobs/README.md`](jobs/README.md).
 
 MIT licensed. See [LICENSE](LICENSE).
