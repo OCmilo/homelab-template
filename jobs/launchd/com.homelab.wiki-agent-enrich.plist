@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.homelab.wiki-agent-enrich</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>@@HOME@@/homelab/scripts/wiki-agent.sh</string>
+        <string>enrich-note</string>
+    </array>
+    <key>WatchPaths</key>
+    <array>
+        <string>@@HOME@@/homelab/config/wiki-vault/wiki/concepts</string>
+        <string>@@HOME@@/homelab/config/wiki-vault/wiki/sources</string>
+    </array>
+    <key>StartInterval</key>
+    <integer>43200</integer>
+    <key>ThrottleInterval</key>
+    <integer>600</integer>
+    <key>StandardErrorPath</key>
+    <string>@@HOME@@/homelab/config/wiki-agent-launchd.log</string>
+</dict>
+</plist>

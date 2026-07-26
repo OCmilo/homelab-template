@@ -1,0 +1,9 @@
+{
+	"id": "wiki-dashboard",
+	"name": "Wiki Dashboard",
+	"version": "2.0.0",
+	"minAppVersion": "1.5.0",
+	"description": "Map, Ask, usage operations, and research queue for an LLM-maintained wiki vault.",
+	"author": "OCmilo",
+	"isDesktopOnly": false
+}

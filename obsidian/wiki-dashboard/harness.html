@@ -1,0 +1,217 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>WLM harness</title>
+<link rel="stylesheet" href="styles.css?v=27">
+<style>
+	:root { color-scheme: dark; }
+	body {
+		margin: 0;
+		--background-primary: #16181d;
+		--text-normal: #dadada;
+		--text-muted: #9a9a9a;
+		--text-faint: #6a6a6a;
+		--font-interface: -apple-system, "Segoe UI", sans-serif;
+		--background-modifier-border: #33363d;
+		--interactive-accent: #7c3aed;
+	}
+	#root { position: fixed; inset: 0; }
+</style>
+</head>
+<body>
+<div id="root" class="view-content"></div>
+<script src="vault-data.js?v=8"></script>
+<script>
+	const COLORS_JSON = '{"ai": "1", "knowledge-management": "5", "software-engineering": "4"}';
+	const MAP_JSON = JSON.stringify({
+		root: "wiki",
+		home: { path: "wiki/mocs/home.md", size: 16 },
+		exclude: ["graph-settings"],
+		folders: {
+			mocs: { size: 9, hub: true },
+			concepts: { size: 5.5 },
+			entities: { size: 6 },
+			synthesis: { size: 6, ring: true },
+			sources: { size: 4, outer: true, muted: true },
+		},
+		synthesisSave: { folder: "wiki/synthesis", type: "synthesis" },
+		pulse: { dateFields: ["created"] },
+	});
+
+	location.search.includes("light") &&
+		["--background-primary:hsl(40, 20%, 97%)", "--text-normal:#222", "--text-muted:#666", "--text-faint:#999", "--background-modifier-border:#d8d8de"].forEach(
+			(pair) => {
+				const [key, value] = pair.split(":");
+				document.body.style.setProperty(key, value);
+			}
+		);
+
+	const applyDomShims = () => {
+		HTMLElement.prototype.empty = function () { this.innerHTML = ""; };
+		HTMLElement.prototype.addClass = function (name) { this.classList.add(name); };
+		HTMLElement.prototype.removeClass = function (name) { this.classList.remove(name); };
+		HTMLElement.prototype.setText = function (text) { this.textContent = text; };
+		HTMLElement.prototype.createEl = function (tag, options = {}) {
+			const element = document.createElement(tag);
+			(options.cls ?? "").split(" ").filter(Boolean).forEach((name) => element.classList.add(name));
+			Object.entries(options.attr ?? {}).forEach(([key, value]) => element.setAttribute(key, value));
+			options.text !== undefined && (element.textContent = options.text);
+			this.appendChild(element);
+			return element;
+		};
+	};
+	applyDomShims();
+
+	VAULT_DATA["wiki/concepts/orphan-test.md"] = { basename: "orphan-test", links: [], subjects: ["ai"] };
+	const DAY_MS = 24 * 3600 * 1000;
+	const isoDay = (offsetDays) =>
+		new Date(Date.now() - offsetDays * DAY_MS).toISOString().slice(0, 10);
+	const CREATED = Object.fromEntries(
+		Object.keys(VAULT_DATA).map((path, index) => [
+			path,
+			isoDay(index % 3 === 0 ? [1, 2, 8][index % 9 / 3] : (index * 37) % 300),
+		])
+	);
+	delete CREATED["wiki/concepts/orphan-test.md"];
+	const files = Object.entries(VAULT_DATA).map(([path, info], index) => ({
+		path,
+		basename: info.basename,
+		stat: { mtime: Date.now() - (index % 5) * 3 * DAY_MS },
+	}));
+	const fakeApp = {
+		vault: {
+			getMarkdownFiles: () => files,
+			adapter: {
+				read: async (path) =>
+					path.includes("ask.json")
+						? '{"endpoints":["http://mock"],"researchGaps":{"folder":"inbox/research-gaps","type":"research-gap"}}'
+						: path.includes("ask-history.json")
+						? window.__ASK_HISTORY ?? "[]"
+						: path.includes("map.json")
+						? MAP_JSON
+						: COLORS_JSON,
+				write: async (path, content) => {
+					window.__ASK_HISTORY = content;
+				},
+			},
+			createFolder: async () => {},
+			create: async (path, content) => console.log("create:", path, content.length),
+			getAbstractFileByPath: (path) => files.find((file) => file.path === path) ?? null,
+			cachedRead: async (file) =>
+				`# ${file.basename}\n\nHarness preview body for **${file.basename}** with an [[wiki/mocs/home|internal link]].\n\n- point one\n- point two`,
+		},
+		metadataCache: {
+			resolvedLinks: Object.fromEntries(
+				Object.entries(VAULT_DATA).map(([path, info]) => [
+					path,
+					Object.fromEntries(info.links.map((link) => [link, 1])),
+				])
+			),
+			getFileCache: (file) => ({
+				frontmatter: {
+					tags: VAULT_DATA[file.path].subjects,
+					...(CREATED[file.path] ? { created: CREATED[file.path] } : {}),
+				},
+			}),
+			getFirstLinkpathDest: (linkpath) => files.find((file) => file.path === `${linkpath}.md`) ?? null,
+			on: () => ({}),
+		},
+		workspace: {
+			on: () => ({}),
+			openLinkText: (path) => console.log("open:", path),
+			onLayoutReady: (callback) => callback(),
+			getLeavesOfType: () => [{}],
+		},
+	};
+
+	window.require = () => ({
+		ItemView: class {
+			constructor() {
+				this.app = fakeApp;
+				this.contentEl = document.getElementById("root");
+			}
+			registerEvent() {}
+			registerDomEvent(target, event, handler) { target.addEventListener(event, handler); }
+		},
+		Plugin: class {},
+		MarkdownRenderer: {
+			render: async (app, markdown, containerEl) => {
+				const html = markdown
+					.replace(/^# (.+)$/gm, "<h1>$1</h1>")
+					.replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/g, '<a class="internal-link" data-href="$1">$2</a>')
+					.replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
+					.replace(/^- (.+)$/gm, "<li>$1</li>")
+					.replace(/\n\n/g, "<br><br>");
+				containerEl.innerHTML += html;
+			},
+		},
+		debounce: (fn) => fn,
+		setIcon: (element, name) => {
+			element.textContent = name === "search" ? "⌕" : "✕";
+		},
+		requestUrl: async ({ method, url }) => {
+			await new Promise((resolve) => setTimeout(resolve, method === "POST" ? 300 : 1000));
+			if (url.includes("/ops")) {
+				return {
+					status: 200,
+					json: {
+						spentEur: 2.8167, totalSpentEur: 2.8167,
+						cacheSavedEur: 5.0341, runs: 20,
+						spentUsd: 2.8167, totalSpentUsd: 2.8167,
+						cacheSavedUsd: 5.0341,
+						credit: {
+							balanceUsd: 2.48, checkedAt: new Date().toISOString(),
+							lastTopUpUsd: 5, lastTopUpAt: new Date().toISOString(),
+						},
+						openaiCost: {
+							status: "ok", spendUsd: 3.19, periodStart: "2026-07-01",
+							checkedAt: new Date().toISOString(), scope: "project",
+							services: { wikiAgent: 3.0525, karakeep: 0.1367, wikiTranscription: 0.0008, other: 0 },
+							attribution: "model-line-item",
+						},
+						activeAskJobs: 0, usdToEur: 1,
+						byKind: {
+							"ingest-inbox": { runs: 6, costEur: 1.3935, costUsd: 1.3935 },
+							"refresh-moc": { runs: 4, costEur: 0.7225, costUsd: 0.7225 },
+							"lint-wiki": { runs: 2, costEur: 0.3751, costUsd: 0.3751 },
+							ask: { runs: 8, costEur: 0.3255, costUsd: 0.3255 },
+						},
+						pending: { inbox: 0, rawSources: 0, researchGaps: 0 },
+						recentFailures: [{
+							kind: "lint-wiki", status: "failed",
+							timestamp: new Date().toISOString(),
+							error: "insufficient_quota: add API credit, then retry",
+						}],
+					},
+				};
+			}
+			return method === "POST"
+				? { status: 202, json: { id: "job1" } }
+				: {
+						status: 200,
+						json: {
+							status: "done",
+							elapsed: 41,
+							answer:
+								"The wiki's home hub is [[wiki/mocs/home|home]], and orchestration overhead is covered in [[wiki/concepts/agentic-orchestration|agentic-orchestration]].\n\nNot in the wiki: head-to-head latency numbers.",
+						},
+				  };
+		},
+	});
+	window.module = { exports: null };
+</script>
+<script src="main.js?v=69"></script>
+<script>
+	const viewClassHolder = {};
+	const boot = async () => {
+		const MapViewClass = window.__WLM_VIEW;
+		const view = new MapViewClass({});
+		window.__WLM_INSTANCE = view;
+		await view.onOpen();
+		view.handleResize();
+	};
+	boot();
+</script>
+</body>
+</html>

@@ -1,0 +1,82 @@
+# Operating conventions
+
+Last verified: 2026-07-26
+
+The rules that hold across the whole stack, independent of who runs it. Machine
+facts (hostnames, IPs, personal accounts) live in the repo root `CLAUDE.md`;
+this file is the part that travels.
+
+## Hard rules
+
+- NEVER run host-side (macOS) `sqlite3` against a live container database —
+  virtiofs lock/cache incoherence corrupts it. Stop the service first or use
+  `docker exec`. Write-heavy SQLite databases belong in named volumes (ext4
+  inside the Colima VM), never on a macOS bind mount. The rule comes from an
+  incident that corrupted two databases; the upstream repo keeps the postmortem
+  at `docs/postmortems/2026-07-06-sqlite-over-colima.md`.
+- Do not add Linux GPU passthrough (`/dev/dri`): containers run inside the
+  Colima VM and cannot reach VideoToolbox or the iGPU. Prefer Direct Play.
+- Bind mounts from macOS `/tmp` are silently empty inside the VM — Colima does
+  not mount it. Use `$HOME` paths.
+- Uptime Kuma monitors must use the LAN IP and published port
+  (`http://${LAN_IP}:<port>`): container-name URLs break when container IPs
+  churn on recreate, and private domains do not resolve inside containers.
+  Homepage widgets still use container-name URLs — they re-resolve per request,
+  so churn is harmless there.
+- All containers that touch media mount the SAME `/data` root (TRaSH Guides
+  hardlink layout): downloads to `/data/torrents`, imports into
+  `/data/media/{tv,movies}`. Never introduce per-app volumes that break
+  hardlinks. If a "remote path mapping" ever seems necessary, the mounts are
+  wrong.
+- Remote access is Tailscale-only; nothing is forwarded on the router. Never
+  propose exposing a service publicly.
+
+## Conventions
+
+- All changes go through this repo: edit compose/config, then
+  `docker compose up -d`. No manual `docker run`, no changes made only inside a
+  container.
+- Use `admin` as the standard username for application administrator accounts.
+  Where a service demands an email address, use one address consistently.
+- Declare every operational schedule in `jobs/jobs.json`. Healthchecks observes
+  executions; launchd, container cron, and application schedulers remain the
+  execution authorities. launchd jobs are templates in `jobs/launchd/` installed
+  by `scripts/install-jobs.sh`.
+- Secrets live in `.env` (gitignored); `.env.example` documents every variable
+  with placeholder values only. Quote any value containing spaces — shell
+  scripts source this file.
+- Pin images with full version tags once a service is stable; note the reason in
+  the commit message.
+- Commit messages: conventional commits (feat/fix/chore), imperative mood.
+
+## Common tasks
+
+- Bring up / apply changes: `docker compose up -d`
+- Logs: `docker compose logs -f <service>`, or Dozzle at
+  `https://logs.${STACK_HOST}.${PRIVATE_DOMAIN}`
+- Update images: bump the tag when Diun notifies, then
+  `docker compose pull && docker compose up -d`
+- Vulnerability scan: `TRIVY_NOTIFY=false scripts/trivy-scan.sh` writes reports
+  under `config/trivy/reports/latest`; scheduled weekly by launchd.
+- Scheduled jobs: validate with
+  `python3 scripts/healthchecks-reconcile.py --registry jobs/jobs.json --validate-only`;
+  reconcile with
+  `docker compose exec healthchecks python /opt/homelab/scripts/healthchecks-reconcile.py`;
+  install/refresh launchd agents with `scripts/install-jobs.sh`.
+- Backups: nightly restic run via launchd (`scripts/backup-restic.sh`). It stops
+  the stateful services for the volume exports plus the restic run (minutes, not
+  seconds), snapshots to iCloud Drive, verifies with `restic check`, and
+  optionally mirrors to Backblaze B2. No media content is backed up.
+- Health check: every service should answer on its port from the LAN and via
+  Tailscale before a change is considered done.
+
+## Agent operating notes
+
+- Read `docs/current-state.md` before making changes; it records the live
+  deployed state and must be kept in sync after infra changes.
+- Never commit `.env`, `config/`, `cache/`, service passwords, API keys, auth
+  tokens, cookies, tracker credentials, or generated application databases.
+- When documenting credentials or an API integration, use placeholders such as
+  `<redacted>` or `<set in UI>`.
+- Verify with `docker compose config` and service health checks before reporting
+  success.

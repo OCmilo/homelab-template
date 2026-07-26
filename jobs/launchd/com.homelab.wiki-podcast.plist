@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.homelab.wiki-podcast</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>@@HOME@@/homelab/scripts/wiki-podcast-transcribe.sh</string>
+    </array>
+    <key>WatchPaths</key>
+    <array>
+        <string>@@HOME@@/homelab/config/wiki-vault/inbox/podcasts.md</string>
+    </array>
+    <key>StartInterval</key>
+    <integer>21600</integer>
+    <key>ThrottleInterval</key>
+    <integer>600</integer>
+    <key>StandardErrorPath</key>
+    <string>@@HOME@@/homelab/config/wiki-podcast-launchd.log</string>
+</dict>
+</plist>

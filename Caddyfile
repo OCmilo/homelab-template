@@ -1,0 +1,143 @@
+{$STACK_HOST}.{$PRIVATE_DOMAIN}, *.{$STACK_HOST}.{$PRIVATE_DOMAIN} {
+	# DNS-01 ACME validation through Porkbun means no public inbound ports are
+	# needed for certificate issuance. Public resolvers are used only for the
+	# ACME challenge zone lookup; Docker service names still resolve normally.
+	tls {
+		dns porkbun {
+			api_key {env.PORKBUN_API_KEY}
+			api_secret_key {env.PORKBUN_API_SECRET_KEY}
+		}
+		resolvers 1.1.1.1 8.8.8.8
+	}
+
+	encode zstd gzip
+
+	@root host {$STACK_HOST}.{$PRIVATE_DOMAIN}
+	handle @root {
+		redir https://homepage.{$STACK_HOST}.{$PRIVATE_DOMAIN}{uri} permanent
+	}
+
+	@homepage host homepage.{$STACK_HOST}.{$PRIVATE_DOMAIN}
+	handle @homepage {
+		reverse_proxy homepage:3000
+	}
+
+	@beszel host beszel.{$STACK_HOST}.{$PRIVATE_DOMAIN}
+	handle @beszel {
+		reverse_proxy beszel:8090
+	}
+
+	@jellyfin host jellyfin.{$STACK_HOST}.{$PRIVATE_DOMAIN}
+	handle @jellyfin {
+		reverse_proxy jellyfin:8096
+	}
+
+	@requests host requests.{$STACK_HOST}.{$PRIVATE_DOMAIN}
+	handle @requests {
+		reverse_proxy jellyseerr:5055
+	}
+
+	@maintainerr host cleanup.{$STACK_HOST}.{$PRIVATE_DOMAIN}
+	handle @maintainerr {
+		reverse_proxy maintainerr:6246
+	}
+
+	@sonarr host sonarr.{$STACK_HOST}.{$PRIVATE_DOMAIN}
+	handle @sonarr {
+		reverse_proxy sonarr:8989
+	}
+
+	@radarr host radarr.{$STACK_HOST}.{$PRIVATE_DOMAIN}
+	handle @radarr {
+		reverse_proxy radarr:7878
+	}
+
+	@bazarr host bazarr.{$STACK_HOST}.{$PRIVATE_DOMAIN}
+	handle @bazarr {
+		reverse_proxy bazarr:6767
+	}
+
+	@prowlarr host prowlarr.{$STACK_HOST}.{$PRIVATE_DOMAIN}
+	handle @prowlarr {
+		reverse_proxy gluetun:9696
+	}
+
+	@qbittorrent host qbittorrent.{$STACK_HOST}.{$PRIVATE_DOMAIN}
+	handle @qbittorrent {
+		reverse_proxy gluetun:8080
+	}
+
+	@flaresolverr host flaresolverr.{$STACK_HOST}.{$PRIVATE_DOMAIN}
+	handle @flaresolverr {
+		reverse_proxy gluetun:8191
+	}
+
+	@uptime host uptime.{$STACK_HOST}.{$PRIVATE_DOMAIN}
+	handle @uptime {
+		reverse_proxy uptime-kuma:3001
+	}
+
+	@jobs host jobs.{$STACK_HOST}.{$PRIVATE_DOMAIN}
+	handle @jobs {
+		reverse_proxy healthchecks:8000
+	}
+
+	@logs host logs.{$STACK_HOST}.{$PRIVATE_DOMAIN}
+	handle @logs {
+		reverse_proxy dozzle:8080
+	}
+
+	@adguard host adguard.{$STACK_HOST}.{$PRIVATE_DOMAIN}
+	handle @adguard {
+		reverse_proxy host.docker.internal:8081
+	}
+
+	@book_requests host book-requests.{$STACK_HOST}.{$PRIVATE_DOMAIN}
+	handle @book_requests {
+		reverse_proxy gluetun:8084
+	}
+
+	@calibre host calibre.{$STACK_HOST}.{$PRIVATE_DOMAIN}
+	handle @calibre {
+		reverse_proxy calibre-web-automated:8083
+	}
+
+	@audiobooks host audiobooks.{$STACK_HOST}.{$PRIVATE_DOMAIN}
+	handle @audiobooks {
+		reverse_proxy audiobookshelf:80
+	}
+
+	@paperless host paperless.{$STACK_HOST}.{$PRIVATE_DOMAIN}
+	handle @paperless {
+		reverse_proxy paperless:8000
+	}
+
+	@karakeep host karakeep.{$STACK_HOST}.{$PRIVATE_DOMAIN}
+	handle @karakeep {
+		reverse_proxy karakeep:3000
+	}
+
+	@livesync host livesync.{$STACK_HOST}.{$PRIVATE_DOMAIN}
+	handle @livesync {
+		reverse_proxy couchdb:5984
+	}
+
+	@money host money.{$STACK_HOST}.{$PRIVATE_DOMAIN}
+	handle @money {
+		reverse_proxy firefly:8080
+	}
+
+	@importer host importer.{$STACK_HOST}.{$PRIVATE_DOMAIN}
+	handle @importer {
+		reverse_proxy firefly-importer:8080
+	}
+
+	@wealth host wealth.{$STACK_HOST}.{$PRIVATE_DOMAIN}
+	handle @wealth {
+		reverse_proxy ghostfolio:3333
+	}
+
+	handle {
+		respond "Unknown service" 404
+	}
+}

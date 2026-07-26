@@ -1,0 +1,344 @@
+{
+  "schema_version": 1,
+  "timezone": "Europe/Madrid",
+  "jobs": [
+    {
+      "id": "restic-backup",
+      "name": "Restic backup",
+      "authority": "launchd",
+      "source": "jobs/launchd/com.homelab.backup.plist",
+      "command": "scripts/backup-restic.sh",
+      "purpose": "Quiesce application databases and back up homelab state to restic.",
+      "schedule": {
+        "type": "cron",
+        "expression": "0 3 * * *"
+      },
+      "expected_duration_seconds": 300,
+      "grace_seconds": 1800,
+      "risk": "high",
+      "monitoring": "active"
+    },
+    {
+      "id": "enable-banking-consent-reminder",
+      "name": "Enable Banking consent reminder",
+      "authority": "launchd",
+      "source": "jobs/launchd/com.homelab.eb-consent-reminder.plist",
+      "command": "scripts/eb-consent-reminder.sh",
+      "purpose": "Warn before the Revolut Enable Banking consent expires.",
+      "schedule": {
+        "type": "cron",
+        "expression": "0 10 * * *"
+      },
+      "expected_duration_seconds": 10,
+      "grace_seconds": 300,
+      "risk": "low",
+      "monitoring": "active"
+    },
+    {
+      "id": "ghostfolio-cash-sync",
+      "name": "Ghostfolio cash sync",
+      "authority": "launchd",
+      "source": "jobs/launchd/com.homelab.ghostfolio-cash-sync.plist",
+      "command": "scripts/ghostfolio-cash-sync.py",
+      "purpose": "Sync Firefly cash-account balances into Ghostfolio.",
+      "schedule": {
+        "type": "cron",
+        "expression": "0 7 * * *"
+      },
+      "expected_duration_seconds": 30,
+      "grace_seconds": 600,
+      "risk": "low",
+      "monitoring": "active"
+    },
+    {
+      "id": "subtitle-translation-fallback",
+      "name": "Subtitle translation fallback",
+      "authority": "launchd",
+      "source": "jobs/launchd/com.homelab.subtitle-translate.plist",
+      "command": "scripts/subtitle-translate-fallback.py",
+      "purpose": "Translate missing target-language subtitles from English.",
+      "schedule": {
+        "type": "cron",
+        "expression": "30 4 * * *"
+      },
+      "expected_duration_seconds": 300,
+      "grace_seconds": 3600,
+      "risk": "medium",
+      "monitoring": "active"
+    },
+    {
+      "id": "trivy-vulnerability-scan",
+      "name": "Trivy vulnerability scan",
+      "authority": "launchd",
+      "source": "jobs/launchd/com.homelab.trivy-scan.plist",
+      "command": "scripts/trivy-scan.sh",
+      "purpose": "Scan pinned container images and publish the vulnerability report.",
+      "schedule": {
+        "type": "cron",
+        "expression": "0 11 * * 0"
+      },
+      "expected_duration_seconds": 900,
+      "grace_seconds": 7200,
+      "risk": "medium",
+      "monitoring": "active"
+    },
+    {
+      "id": "weekly-finance-digest",
+      "name": "Weekly finance digest",
+      "authority": "launchd",
+      "source": "jobs/launchd/com.homelab.weekly-digest.plist",
+      "command": "scripts/weekly-digest.py",
+      "purpose": "Send the weekly Firefly budget digest to Telegram.",
+      "schedule": {
+        "type": "cron",
+        "expression": "0 9 * * 1"
+      },
+      "expected_duration_seconds": 30,
+      "grace_seconds": 600,
+      "risk": "low",
+      "monitoring": "active"
+    },
+    {
+      "id": "wiki-note-enrichment",
+      "name": "Wiki note enrichment",
+      "authority": "launchd",
+      "source": "jobs/launchd/com.homelab.wiki-agent-enrich.plist",
+      "command": "scripts/wiki-agent.sh enrich-note",
+      "purpose": "Enrich changed wiki concepts and sources; WatchPaths may trigger early runs.",
+      "schedule": {
+        "type": "interval",
+        "seconds": 43200
+      },
+      "expected_duration_seconds": 900,
+      "grace_seconds": 7200,
+      "risk": "medium",
+      "monitoring": "active"
+    },
+    {
+      "id": "wiki-inbox-ingestion",
+      "name": "Wiki inbox ingestion",
+      "authority": "launchd",
+      "source": "jobs/launchd/com.homelab.wiki-agent-ingest.plist",
+      "command": "scripts/wiki-agent.sh ingest-inbox",
+      "purpose": "Ingest changed wiki inbox content; WatchPaths may trigger early runs.",
+      "schedule": {
+        "type": "interval",
+        "seconds": 43200
+      },
+      "expected_duration_seconds": 900,
+      "grace_seconds": 7200,
+      "risk": "medium",
+      "monitoring": "active"
+    },
+    {
+      "id": "wiki-lint",
+      "name": "Wiki lint",
+      "authority": "launchd",
+      "source": "jobs/launchd/com.homelab.wiki-agent-lint.plist",
+      "command": "scripts/wiki-agent.sh lint-wiki",
+      "purpose": "Run scheduled wiki consistency and quality checks.",
+      "schedule": {
+        "type": "cron",
+        "expression": "0 5 * * 0"
+      },
+      "expected_duration_seconds": 900,
+      "grace_seconds": 7200,
+      "risk": "medium",
+      "monitoring": "active"
+    },
+    {
+      "id": "wiki-map-of-content-refresh",
+      "name": "Wiki map-of-content refresh",
+      "authority": "launchd",
+      "source": "jobs/launchd/com.homelab.wiki-agent-moc.plist",
+      "command": "scripts/wiki-agent.sh refresh-moc",
+      "purpose": "Refresh generated wiki maps of content.",
+      "schedule": {
+        "type": "cron",
+        "expression": "0 7 * * *"
+      },
+      "expected_duration_seconds": 600,
+      "grace_seconds": 3600,
+      "risk": "medium",
+      "monitoring": "active"
+    },
+    {
+      "id": "karakeep-wiki-intake",
+      "name": "Karakeep wiki intake",
+      "authority": "launchd",
+      "source": "jobs/launchd/com.homelab.wiki-karakeep.plist",
+      "command": "scripts/wiki-karakeep-pull.sh",
+      "purpose": "Pull bookmarks tagged for the wiki into the vault.",
+      "schedule": {
+        "type": "interval",
+        "seconds": 3600
+      },
+      "expected_duration_seconds": 300,
+      "grace_seconds": 1800,
+      "risk": "low",
+      "monitoring": "active"
+    },
+    {
+      "id": "wiki-podcast-transcription",
+      "name": "Wiki podcast transcription",
+      "authority": "launchd",
+      "source": "jobs/launchd/com.homelab.wiki-podcast.plist",
+      "command": "scripts/wiki-podcast-transcribe.sh",
+      "purpose": "Transcribe queued podcasts; WatchPaths may trigger early runs.",
+      "schedule": {
+        "type": "interval",
+        "seconds": 21600
+      },
+      "expected_duration_seconds": 3600,
+      "grace_seconds": 21600,
+      "risk": "medium",
+      "monitoring": "active"
+    },
+    {
+      "id": "firefly-housekeeping",
+      "name": "Firefly housekeeping",
+      "authority": "container-cron",
+      "source": "scripts/firefly-cron-run.sh",
+      "command": "firefly-cron-run.sh housekeeping",
+      "purpose": "Run Firefly recurring-transaction and budget housekeeping.",
+      "schedule": {
+        "type": "cron",
+        "expression": "0 2 * * *"
+      },
+      "expected_duration_seconds": 60,
+      "grace_seconds": 1800,
+      "risk": "medium",
+      "monitoring": "active"
+    },
+    {
+      "id": "firefly-autoimport",
+      "name": "Firefly autoimport",
+      "authority": "container-cron",
+      "source": "scripts/firefly-cron-run.sh",
+      "command": "firefly-cron-run.sh autoimport",
+      "purpose": "Run the saved nightly Revolut import configuration.",
+      "schedule": {
+        "type": "cron",
+        "expression": "30 2 * * *"
+      },
+      "expected_duration_seconds": 300,
+      "grace_seconds": 3600,
+      "risk": "medium",
+      "monitoring": "active"
+    },
+    {
+      "id": "ghostfolio-ibkr-sync",
+      "name": "Ghostfolio IBKR sync",
+      "authority": "application-cron",
+      "source": "docker-compose.yml#ghostfolio-ibkr-sync",
+      "command": "/root/run.sh",
+      "purpose": "Import IBKR Flex positions, trades, and dividends into Ghostfolio.",
+      "schedule": {
+        "type": "cron",
+        "expression": "30 6 * * *"
+      },
+      "expected_duration_seconds": 300,
+      "grace_seconds": 7200,
+      "risk": "medium",
+      "monitoring": "active"
+    },
+    {
+      "id": "diun-image-update-scan",
+      "name": "Diun image update scan",
+      "authority": "application-cron",
+      "source": "docker-compose.yml#diun",
+      "command": "Diun internal scheduler",
+      "purpose": "Check pinned container images for upstream updates.",
+      "schedule": {
+        "type": "cron",
+        "expression": "0 8 * * *"
+      },
+      "expected_duration_seconds": 300,
+      "grace_seconds": 3600,
+      "risk": "low",
+      "monitoring": "catalog-only",
+      "notes": "Paused until Diun emits a per-run completion hook."
+    },
+    {
+      "id": "recyclarr-trash-sync",
+      "name": "Recyclarr TRaSH sync",
+      "authority": "application-cron",
+      "source": "docker-compose.yml#recyclarr",
+      "command": "Recyclarr internal scheduler",
+      "purpose": "Sync TRaSH Guide custom formats into Sonarr and Radarr.",
+      "schedule": {
+        "type": "cron",
+        "expression": "0 5 * * 1"
+      },
+      "expected_duration_seconds": 300,
+      "grace_seconds": 7200,
+      "risk": "medium",
+      "monitoring": "catalog-only",
+      "notes": "Paused until Recyclarr emits a per-run completion hook."
+    },
+    {
+      "id": "firefly-uncategorized-alert",
+      "name": "Firefly uncategorized transaction alert",
+      "authority": "launchd",
+      "source": "jobs/launchd/com.homelab.firefly-uncategorized-alert.plist",
+      "command": "scripts/firefly-uncategorized-alert.py",
+      "purpose": "Warn when imported transactions land without a category, which is how silent rule breakage shows up.",
+      "schedule": {
+        "type": "cron",
+        "expression": "0 9 * * *"
+      },
+      "expected_duration_seconds": 15,
+      "grace_seconds": 900,
+      "risk": "low",
+      "monitoring": "active"
+    },
+    {
+      "id": "firefly-normalize-merchants",
+      "name": "Firefly merchant normalization",
+      "authority": "launchd",
+      "source": "jobs/launchd/com.homelab.firefly-normalize-merchants.plist",
+      "command": "scripts/firefly-normalize-merchants.py",
+      "purpose": "Collapse the per-transaction expense accounts the importer creates into one account per merchant.",
+      "schedule": {
+        "type": "cron",
+        "expression": "30 8 * * *"
+      },
+      "expected_duration_seconds": 60,
+      "grace_seconds": 1800,
+      "risk": "medium",
+      "monitoring": "active"
+    },
+    {
+      "id": "firefly-autocategorize",
+      "name": "Firefly category learning",
+      "authority": "launchd",
+      "source": "jobs/launchd/com.homelab.firefly-autocategorize.plist",
+      "command": "scripts/firefly-autocategorize.py",
+      "purpose": "Categorise what the rules missed by copying how the same merchant was filed before.",
+      "schedule": {
+        "type": "cron",
+        "expression": "45 8 * * *"
+      },
+      "expected_duration_seconds": 60,
+      "grace_seconds": 1800,
+      "risk": "low",
+      "monitoring": "active"
+    },
+    {
+      "id": "firefly-rules-drift",
+      "name": "Firefly rules drift check",
+      "authority": "launchd",
+      "source": "jobs/launchd/com.homelab.firefly-rules-drift.plist",
+      "command": "scripts/firefly-rules-drift.py",
+      "purpose": "Detect Firefly rules edited in the UI but not exported to config/firefly/rules.json; report the diff to Telegram.",
+      "schedule": {
+        "type": "cron",
+        "expression": "15 9 * * *"
+      },
+      "expected_duration_seconds": 15,
+      "grace_seconds": 600,
+      "risk": "low",
+      "monitoring": "active"
+    }
+  ]
+}

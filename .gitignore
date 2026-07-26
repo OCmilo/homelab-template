@@ -1,0 +1,19 @@
+.env
+# config is runtime state (gitignored) — except wiki agent skill prompts,
+# which are config-as-code (no secrets); codex-home auth + state stay ignored
+config/*
+!config/wiki-agent/
+config/wiki-agent/*
+!config/wiki-agent/skills/
+cache/
+bin/
+config/adguardhome-host/admin-password.txt
+backups/
+*.swp
+__pycache__/
+
+# firefly merchant map and rules are config-as-code (no secrets)
+!config/firefly/
+config/firefly/*
+!config/firefly/merchant-map.json
+!config/firefly/rules.json

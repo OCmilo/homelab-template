@@ -1,0 +1,32 @@
+# Paths exported to the public template repo, one per line. Directories are
+# copied recursively; a leading ! removes a path that an earlier entry pulled
+# in. An allowlist, not an ignore list: a new personal file cannot leak by
+# omission — it simply does not ship until it is named here.
+#
+# Anything holding machine facts, credentials, or personal content stays out:
+# CLAUDE.md, docs/current-state.md, docs/finance-stack.md, docs/llm-wiki-spec.md,
+# docs/book-audiobook-flow-spec.md, docs/paperless-proton-mail.md,
+# docs/postmortems/, config/firefly/*.json, assets/.
+.env.example
+.gitignore
+Caddyfile
+docker-compose.yml
+docker/
+scripts/
+jobs/README.md
+jobs/jobs.json
+jobs/launchd/
+jobs/template-allowlist.txt
+config/wiki-agent/skills/
+obsidian/wiki-dashboard/
+# Harness fixture regenerated from a real vault by regen-vault-data.py — it
+# carries the note titles of whoever last ran it.
+!obsidian/wiki-dashboard/vault-data.js
+# Private-only tooling that lives inside an exported directory.
+!scripts/template-export.sh
+!scripts/template-drift.py
+docs/README.md
+docs/setup.md
+docs/conventions.md
+docs/job-monitoring.md
+docs/wiki-system.md

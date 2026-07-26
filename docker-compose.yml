@@ -1,0 +1,702 @@
+# Homelab media stack — Jellyfin + *arr automation
+# macOS/Colima mode: no /dev/dri GPU passthrough; prefer direct play on LAN.
+# Layout follows TRaSH Guides: single /data mount everywhere so hardlinks
+# and atomic moves work. NEVER split /data into separate volumes per app.
+#
+#   ${DATA_ROOT}
+#   ├── torrents/          # qBittorrent downloads here
+#   │   ├── movies/
+#   │   └── tv/
+#   └── media/             # Jellyfin libraries; Sonarr/Radarr import here
+#       ├── movies/
+#       └── tv/
+#
+# qBittorrent routes ALL traffic through the gluetun NordVPN (NordLynx) tunnel.
+# gluetun owns qBittorrent's network namespace, so qBittorrent has NO own ports
+# block — its WebUI (8080) and torrent ports (6881) are published on gluetun.
+# gluetun's killswitch drops qBittorrent connectivity if the tunnel fails.
+
+x-common-env: &common-env
+  PUID: ${PUID}
+  PGID: ${PGID}
+  TZ: ${TZ}
+
+services:
+  jellyfin:
+    image: jellyfin/jellyfin:10.11.11
+    container_name: jellyfin
+    environment:
+      TZ: ${TZ}
+    ports:
+      - "8096:8096"
+    volumes:
+      - jellyfin-config:/config
+      - ./cache/jellyfin:/cache
+      - ${DATA_ROOT}/media:/data/media
+    restart: unless-stopped
+
+  gluetun:
+    image: qmcgaw/gluetun:latest@sha256:b0ee2135e6ba52ad3f102aae9663707cd1c9531485117067a380d3b2b6dd991d
+    container_name: gluetun
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    environment:
+      VPN_SERVICE_PROVIDER: nordvpn
+      VPN_TYPE: wireguard
+      WIREGUARD_PRIVATE_KEY: ${NORDVPN_PRIVATE_KEY}
+      SERVER_COUNTRIES: ${VPN_COUNTRIES}
+      FIREWALL_OUTBOUND_SUBNETS: ${LAN_SUBNET}
+      # gluetun's DNS blocklist NXDOMAINs book mirror domains Shelfmark needs
+      BLOCK_MALICIOUS: "off"
+      TZ: ${TZ}
+    volumes:
+      # Control-server auth roles: Homepage's gluetun widget reads the /v1
+      # status routes on port 8000 (docker-network only, not published)
+      - ./config/gluetun/auth:/gluetun/auth:ro
+    ports:
+      - "8080:8080"
+      - "6881:6881"
+      - "6881:6881/udp"
+      - "9696:9696"
+      - "8191:8191"
+      - "8084:8084"
+    restart: unless-stopped
+
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:5.2.2_v2.0.13-ls464
+    container_name: qbittorrent
+    network_mode: "service:gluetun"
+    depends_on:
+      gluetun:
+        condition: service_healthy
+    environment:
+      <<: *common-env
+      WEBUI_PORT: "8080"
+    volumes:
+      - ./config/qbittorrent:/config
+      - ${DATA_ROOT}/torrents:/data/torrents
+    restart: unless-stopped
+
+  prowlarr:
+    image: lscr.io/linuxserver/prowlarr:2.4.0.5397-ls152
+    container_name: prowlarr
+    network_mode: "service:gluetun"
+    depends_on:
+      gluetun:
+        condition: service_healthy
+    environment:
+      <<: *common-env
+    volumes:
+      - ./config/prowlarr:/config
+    restart: unless-stopped
+
+  flaresolverr:
+    image: ghcr.io/flaresolverr/flaresolverr:v3.5.0
+    container_name: flaresolverr
+    network_mode: "service:gluetun"
+    depends_on:
+      gluetun:
+        condition: service_healthy
+    environment:
+      LOG_LEVEL: info
+      TZ: ${TZ}
+    restart: unless-stopped
+
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:4.0.19.2979-ls317
+    container_name: sonarr
+    environment:
+      <<: *common-env
+    ports:
+      - "8989:8989"
+    volumes:
+      - ./config/sonarr:/config
+      - ${DATA_ROOT}:/data
+    restart: unless-stopped
+
+  radarr:
+    image: lscr.io/linuxserver/radarr:6.2.1.10461-ls308
+    container_name: radarr
+    environment:
+      <<: *common-env
+    ports:
+      - "7878:7878"
+    volumes:
+      - ./config/radarr:/config
+      - ${DATA_ROOT}:/data
+    restart: unless-stopped
+
+  # Queue janitor: strikes out downloads stuck in metadata/stalled/failed
+  # states that the *arrs never act on, then blocklists + re-searches.
+  decluttarr:
+    image: ghcr.io/manimatter/decluttarr:v2.1.0
+    container_name: decluttarr
+    environment:
+      TZ: ${TZ}
+    volumes:
+      - ./config/decluttarr/config.yaml:/app/config/config.yaml
+      # Upstream v2.1.0 removes failed downloads without blocklisting. Keep the
+      # job enabled, but make removals go through Sonarr/Radarr blocklist flow.
+      - ./docker/decluttarr/src/jobs/remove_failed_downloads.py:/app/src/jobs/remove_failed_downloads.py:ro
+      - ${DATA_ROOT}/media:/data/media:ro
+    restart: unless-stopped
+
+  bazarr:
+    image: lscr.io/linuxserver/bazarr:v1.6.0-ls354
+    container_name: bazarr
+    environment:
+      <<: *common-env
+    ports:
+      - "6767:6767"
+    volumes:
+      - ./config/bazarr:/config
+      - ${DATA_ROOT}/media:/data/media
+    restart: unless-stopped
+
+  jellyseerr:
+    image: ghcr.io/seerr-team/seerr:v3.3.0
+    container_name: jellyseerr
+    init: true
+    environment:
+      TZ: ${TZ}
+    ports:
+      - "5055:5055"
+    volumes:
+      - ./config/jellyseerr:/app/config
+    restart: unless-stopped
+
+  # Library janitor: rule-based "leaving soon" cleanup for Jellyfin libraries.
+  # Connections and API keys are configured in the UI and stored under /opt/data.
+  maintainerr:
+    image: ghcr.io/maintainerr/maintainerr:3.17.1
+    container_name: maintainerr
+    user: "${PUID}:${PGID}"
+    environment:
+      TZ: ${TZ}
+    ports:
+      - "6246:6246"
+    volumes:
+      - ./config/maintainerr:/opt/data
+    restart: unless-stopped
+
+  audiobookshelf:
+    image: ghcr.io/advplyr/audiobookshelf:2.35.1
+    container_name: audiobookshelf
+    ports:
+      - "13378:80"
+    volumes:
+      - ${DATA_ROOT}/media/audiobooks:/audiobooks
+      - ${DATA_ROOT}/media/podcasts:/podcasts
+      - ./config/audiobookshelf/metadata:/metadata
+      - ./config/audiobookshelf/config:/config
+    restart: unless-stopped
+
+  calibre-web-automated:
+    image: crocodilestick/calibre-web-automated:v4.0.6
+    container_name: calibre-web-automated
+    environment:
+      PUID: ${PUID}
+      PGID: ${PGID}
+      TZ: ${TZ}
+      NETWORK_SHARE_MODE: "true"
+      CWA_WATCH_MODE: poll
+      CWA_PORT_OVERRIDE: "8083"
+    ports:
+      - "8083:8083"
+    volumes:
+      - ./config/calibre-web-automated:/config
+      - ${DATA_ROOT}/incoming/ebooks:/cwa-book-ingest
+      - ${DATA_ROOT}/media/ebooks/calibre-library:/calibre-library
+    restart: unless-stopped
+
+  # Book/audiobook search + request UI. Full ${DATA_ROOT} mount so its view of
+  # /data/torrents matches qBittorrent's (Shelfmark requires identical paths).
+  # Ebooks land in the CWA ingest mailbox; audiobooks go straight to the
+  # Audiobookshelf library (configured as destinations in Shelfmark settings).
+  # Runs in gluetun's namespace: the ISP DNS-poisons/geo-blocks its direct
+  # download mirrors, same as the trackers. Port 8084 is published on gluetun;
+  # inside the namespace Shelfmark reaches Prowlarr/qBittorrent via localhost.
+  shelfmark:
+    image: ghcr.io/calibrain/shelfmark:v1.3.2
+    container_name: shelfmark
+    network_mode: "service:gluetun"
+    depends_on:
+      gluetun:
+        condition: service_healthy
+    environment:
+      <<: *common-env
+      INGEST_DIR: /data/incoming/ebooks
+      DIRECT_DOWNLOAD_ENABLED: "true"
+      # Image's CA bundle predates Let's Encrypt's Gen-Y roots (default since
+      # 2026-05-13); bundle in config/shelfmark/certs adds ISRG Root YR/YE
+      REQUESTS_CA_BUNDLE: /config/certs/ca-bundle.pem
+      SSL_CERT_FILE: /config/certs/ca-bundle.pem
+    volumes:
+      - ./config/shelfmark:/config
+      - ${DATA_ROOT}:/data
+    restart: unless-stopped
+
+  homepage:
+    image: ghcr.io/gethomepage/homepage:v1.13.2
+    container_name: homepage
+    environment:
+      HOMEPAGE_ALLOWED_HOSTS: "*"
+    env_file:
+      - path: ./config/healthchecks/homepage.env
+        required: false
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./config/homepage:/app/config
+      - ./assets/homepage-brand/apple-touch-icon.png:/app/public/apple-touch-icon.png:ro
+      - ./assets/homepage-brand/apple-touch-icon-precomposed.png:/app/public/apple-touch-icon-precomposed.png:ro
+      - ./assets/homepage-brand/android-chrome-192x192.png:/app/public/android-chrome-192x192.png:ro
+      - ./assets/homepage-brand/android-chrome-512x512.png:/app/public/android-chrome-512x512.png:ro
+      - ./assets/homepage-brand/favicon-16x16.png:/app/public/favicon-16x16.png:ro
+      - ./assets/homepage-brand/favicon-32x32.png:/app/public/favicon-32x32.png:ro
+      - ./assets/homepage-brand/homepage.ico:/app/public/favicon.ico:ro
+      - ./assets/homepage-brand/homepage.ico:/app/public/homepage.ico:ro
+      - ./assets/homepage-brand/mstile-70x70.png:/app/public/mstile-70x70.png:ro
+      - ./assets/homepage-brand/mstile-144x144.png:/app/public/mstile-144x144.png:ro
+      - ./assets/homepage-brand/mstile-150x150.png:/app/public/mstile-150x150.png:ro
+      - ./assets/homepage-brand/mstile-310x150.png:/app/public/mstile-310x150.png:ro
+      - ./assets/homepage-brand/mstile-310x310.png:/app/public/mstile-310x310.png:ro
+      - ./assets/homepage-brand/safari-pinned-tab.svg:/app/public/safari-pinned-tab.svg:ro
+      - ${DATA_ROOT}:/data:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    restart: unless-stopped
+
+  # Lightweight host/container metrics and alerting. Hub state is a PocketBase
+  # SQLite database, so it lives in a named volume and is stopped/exported by
+  # scripts/backup-restic.sh rather than bind-mounted over Colima virtiofs.
+  beszel:
+    image: henrygd/beszel:0.18.7
+    container_name: beszel
+    environment:
+      APP_URL: https://beszel.${STACK_HOST}.${PRIVATE_DOMAIN}
+      CHECK_UPDATES: "false"
+      USER_EMAIL: ${BESZEL_USER_EMAIL}
+      USER_PASSWORD: ${BESZEL_USER_PASSWORD}
+    ports:
+      - "8090:8090"
+    volumes:
+      - beszel-data:/beszel_data
+      - beszel-socket:/beszel_socket
+    restart: unless-stopped
+
+  # Local Beszel agent. It listens on a shared Unix socket instead of a
+  # published TCP port; the hub connects to /beszel_socket/beszel.sock.
+  beszel-agent:
+    image: henrygd/beszel-agent:0.18.7
+    container_name: beszel-agent
+    depends_on:
+      - beszel
+    env_file:
+      - ./config/beszel/agent.env
+    environment:
+      LISTEN: /beszel_socket/beszel.sock
+      HUB_URL: http://beszel:8090
+    volumes:
+      - beszel-agent-data:/var/lib/beszel-agent
+      - beszel-socket:/beszel_socket
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    restart: unless-stopped
+
+  # Kuma's write-heavy SQLite corrupts on Colima bind mounts (twice on
+  # 2026-07-06); its data lives in a named volume (ext4 inside the VM).
+  # The backup script exports a consistent db copy out of the volume nightly.
+  uptime-kuma:
+    image: louislam/uptime-kuma:2
+    container_name: uptime-kuma
+    ports:
+      - "3001:3001"
+    volumes:
+      - kuma-data:/app/data
+    restart: unless-stopped
+
+  # Live container log viewer + manual container actions
+  dozzle:
+    image: amir20/dozzle:v10.6.8
+    container_name: dozzle
+    environment:
+      DOZZLE_ENABLE_ACTIONS: "false"
+    ports:
+      - "8085:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    restart: unless-stopped
+
+  # Notifies Telegram when pinned images have new releases upstream;
+  # deliberate updates instead of Watchtower-style auto-pulls
+  diun:
+    image: crazymax/diun:4.33.0
+    container_name: diun
+    environment:
+      TZ: ${TZ}
+      DIUN_WATCH_SCHEDULE: "0 8 * * *"
+      DIUN_PROVIDERS_DOCKER: "true"
+      DIUN_PROVIDERS_DOCKER_WATCHBYDEFAULT: "true"
+      DIUN_NOTIF_TELEGRAM_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      # chatID:topicID — posts into the Diun topic of the stack's forum group
+      DIUN_NOTIF_TELEGRAM_CHATIDS: "${TELEGRAM_CHAT_ID}:${TELEGRAM_TOPIC_DIUN:-1}"
+    volumes:
+      - ./config/diun:/data
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    restart: unless-stopped
+
+  # Weekly TRaSH-guide custom-format sync into Sonarr/Radarr
+  recyclarr:
+    image: ghcr.io/recyclarr/recyclarr:8.6.0
+    container_name: recyclarr
+    environment:
+      TZ: ${TZ}
+      CRON_SCHEDULE: "0 5 * * 1"
+    volumes:
+      - ./config/recyclarr:/config
+    restart: unless-stopped
+
+  # Document archive with OCR + auto-tagging; iOS via Swift Paperless app.
+  # Documents are state, not media: media/ and export/ live under ./config so
+  # the nightly restic run captures them. The backup script also runs
+  # document_exporter first — a version-independent restore path that does not
+  # depend on a healthy database copy.
+  paperless-redis:
+    image: redis:8-alpine
+    container_name: paperless-redis
+    restart: unless-stopped
+
+  paperless:
+    image: ghcr.io/paperless-ngx/paperless-ngx:2.20.15
+    container_name: paperless
+    depends_on:
+      - paperless-redis
+    environment:
+      USERMAP_UID: ${PUID}
+      USERMAP_GID: ${PGID}
+      PAPERLESS_TIME_ZONE: ${TZ}
+      PAPERLESS_REDIS: redis://paperless-redis:6379
+      PAPERLESS_SECRET_KEY: ${PAPERLESS_SECRET_KEY}
+      PAPERLESS_URL: https://paperless.${STACK_HOST}.${PRIVATE_DOMAIN}
+      PAPERLESS_CSRF_TRUSTED_ORIGINS: https://paperless.${STACK_HOST}.${PRIVATE_DOMAIN},http://${LAN_IP}:8000,http://${TAILSCALE_IP}:8000
+      # "paperless" (bare container name) is required for Kuma/Homepage probes
+      PAPERLESS_ALLOWED_HOSTS: paperless.${STACK_HOST}.${PRIVATE_DOMAIN},paperless,${LAN_IP},${TAILSCALE_IP},localhost
+      PAPERLESS_OCR_LANGUAGE: por+spa+eng
+      PAPERLESS_OCR_LANGUAGES: por spa
+      PAPERLESS_ADMIN_USER: ${PAPERLESS_ADMIN_USER}
+      PAPERLESS_ADMIN_PASSWORD: ${PAPERLESS_ADMIN_PASSWORD}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./config/paperless/data:/usr/src/paperless/data
+      - ./config/paperless/media:/usr/src/paperless/media
+      - ./config/paperless/export:/usr/src/paperless/export
+      - ${DATA_ROOT}/incoming/scans:/usr/src/paperless/consume
+    restart: unless-stopped
+
+  # Bookmark-everything manager (links, notes, images) with full-text search.
+  # SQLite + Meilisearch data live in named volumes: write-heavy DBs corrupt
+  # on Colima bind mounts (radarr.db/kuma.db, 2026-07-06).
+  karakeep:
+    image: ghcr.io/karakeep-app/karakeep:0.32.0
+    container_name: karakeep
+    depends_on:
+      - karakeep-chrome
+      - karakeep-meilisearch
+    environment:
+      DATA_DIR: /data
+      MEILI_ADDR: http://karakeep-meilisearch:7700
+      BROWSER_WEB_URL: http://karakeep-chrome:9222
+      NEXTAUTH_URL: https://karakeep.${STACK_HOST}.${PRIVATE_DOMAIN}
+      NEXTAUTH_SECRET: ${KARAKEEP_NEXTAUTH_SECRET}
+      MEILI_MASTER_KEY: ${KARAKEEP_MEILI_MASTER_KEY}
+      DISABLE_SIGNUPS: "true"
+      OPENAI_API_KEY: ${KARAKEEP_OPENAI_API_KEY}
+      INFERENCE_TEXT_MODEL: gpt-4o-mini
+      INFERENCE_IMAGE_MODEL: gpt-4o-mini
+    ports:
+      - "3002:3000"
+    volumes:
+      - karakeep-data:/data
+    restart: unless-stopped
+
+  karakeep-chrome:
+    image: gcr.io/zenika-hub/alpine-chrome:124
+    container_name: karakeep-chrome
+    command:
+      - --no-sandbox
+      - --disable-gpu
+      - --disable-dev-shm-usage
+      - --remote-debugging-address=0.0.0.0
+      - --remote-debugging-port=9222
+      - --hide-scrollbars
+    restart: unless-stopped
+
+  karakeep-meilisearch:
+    image: getmeili/meilisearch:v1.49.0
+    container_name: karakeep-meilisearch
+    environment:
+      MEILI_NO_ANALYTICS: "true"
+      MEILI_MASTER_KEY: ${KARAKEEP_MEILI_MASTER_KEY}
+    volumes:
+      - karakeep-meili:/meili_data
+    restart: unless-stopped
+
+  # Personal finance ledger (design: docs/finance-stack.md). SQLite is a
+  # deliberate choice: firefly joins SQLITE_SERVICES in scripts/backup-restic.sh
+  # and gets the existing stop-window treatment — no new backup mechanism.
+  firefly:
+    image: fireflyiii/core:version-6.6.6
+    container_name: firefly
+    environment:
+      APP_KEY: ${FIREFLY_APP_KEY}
+      DB_CONNECTION: sqlite
+      APP_URL: https://money.${STACK_HOST}.${PRIVATE_DOMAIN}
+      TRUSTED_PROXIES: "**"
+      STATIC_CRON_TOKEN: ${FIREFLY_CRON_TOKEN}
+      TZ: ${TZ}
+    ports:
+      - "8086:8080"
+    volumes:
+      - ./config/firefly/upload:/var/www/html/storage/upload
+      - ./config/firefly/database:/var/www/html/storage/database
+    restart: unless-stopped
+
+  # Enable Banking (PSD2) + CSV/OFX imports into Firefly. Admin UI is available
+  # through private Caddy HTTPS at importer.${STACK_HOST}.${PRIVATE_DOMAIN}.
+  # /import holds saved import configs that the nightly firefly-cron autoimport
+  # call replays (Revolut pull).
+  firefly-importer:
+    image: fireflyiii/data-importer:version-2.3.4
+    container_name: firefly-importer
+    depends_on:
+      - firefly
+    environment:
+      FIREFLY_III_URL: http://firefly:8080
+      VANITY_URL: https://importer.${STACK_HOST}.${PRIVATE_DOMAIN}
+      FIREFLY_III_ACCESS_TOKEN: ${FIREFLY_ACCESS_TOKEN}
+      ENABLE_BANKING_APP_ID: ${ENABLE_BANKING_APP_ID}
+      ENABLE_BANKING_PRIVATE_KEY: ${ENABLE_BANKING_PRIVATE_KEY}
+      CAN_POST_AUTOIMPORT: "true"
+      AUTO_IMPORT_SECRET: ${FIREFLY_AUTO_IMPORT_SECRET}
+      IMPORT_DIR_ALLOWLIST: /import
+      # Behind Caddy HTTPS for Enable Banking consent flows — trust the proxy
+      # so redirect URLs generate as https.
+      TRUSTED_PROXIES: "**"
+      TZ: ${TZ}
+    ports:
+      - "8087:8080"
+    volumes:
+      - ./config/firefly-importer/import:/import
+      - ./config/firefly-importer/eb-private.pem:/secrets/eb-private.pem:ro
+    restart: unless-stopped
+
+  # Firefly housekeeping (recurring transactions, budgets) at 02:00 and the
+  # nightly Revolut autoimport at 02:30 — both before the 03:00 restic run
+  # stops firefly. The autoimport call no-ops until a saved import config
+  # exists in /import.
+  firefly-cron:
+    image: alpine:3.22
+    container_name: firefly-cron
+    env_file:
+      - path: ./config/healthchecks/ping-urls.env
+        required: false
+    environment:
+      TZ: ${TZ}
+      HEALTHCHECKS_BASE_URL: http://healthchecks:8000
+      FIREFLY_CRON_TOKEN: ${FIREFLY_CRON_TOKEN}
+      FIREFLY_AUTO_IMPORT_SECRET: ${FIREFLY_AUTO_IMPORT_SECRET}
+    volumes:
+      - ./scripts/firefly-cron-run.sh:/usr/local/bin/firefly-cron-run.sh:ro
+    command: sh /usr/local/bin/firefly-cron-run.sh daemon
+    restart: unless-stopped
+
+  # Wealth tracking (docs/finance-stack.md Phase 3): IBKR/Kraken positions,
+  # cash balances, net worth in EUR. LAN/Tailscale-only via Caddy.
+  ghostfolio:
+    image: ghostfolio/ghostfolio:3.24.0
+    container_name: ghostfolio
+    depends_on:
+      - ghostfolio-db
+      - ghostfolio-redis
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://ghostfolio:${GHOSTFOLIO_DB_PASSWORD}@ghostfolio-db:5432/ghostfolio?connect_timeout=300
+      REDIS_HOST: ghostfolio-redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${GHOSTFOLIO_REDIS_PASSWORD}
+      ACCESS_TOKEN_SALT: ${GHOSTFOLIO_ACCESS_TOKEN_SALT}
+      JWT_SECRET_KEY: ${GHOSTFOLIO_JWT_SECRET}
+      TZ: ${TZ}
+    ports:
+      - "3333:3333"
+    restart: unless-stopped
+
+  # pg_dump written to ./config/ghostfolio/dumps by backup-restic.sh is the
+  # restore path of record; the raw data dir copy is version-picky.
+  ghostfolio-db:
+    image: postgres:15-alpine
+    container_name: ghostfolio-db
+    environment:
+      POSTGRES_DB: ghostfolio
+      POSTGRES_USER: ghostfolio
+      POSTGRES_PASSWORD: ${GHOSTFOLIO_DB_PASSWORD}
+      TZ: ${TZ}
+    volumes:
+      - ./config/ghostfolio/db:/var/lib/postgresql/data
+      - ./config/ghostfolio/dumps:/dumps
+    restart: unless-stopped
+
+  # Dedicated cache — do NOT share with paperless-redis (blast radius isolation)
+  ghostfolio-redis:
+    image: redis:8-alpine
+    container_name: ghostfolio-redis
+    command: redis-server --requirepass ${GHOSTFOLIO_REDIS_PASSWORD}
+    restart: unless-stopped
+
+  # IBKR positions/trades/dividends into Ghostfolio via Flex Web Service.
+  # Upstream publishes no version tags — pinned by digest instead.
+  # Flex token expires 2027-06-12: regenerate in IBKR (Performance & Reports
+  # -> Flex Queries -> Flex Web Service Configuration) and update .env.
+  ghostfolio-ibkr-sync:
+    image: agusalex/ghostfolio-sync@sha256:264372a508bd82b9d1d159dd7f83da8c62dc0c8b60cfc3800d137b910d9a018b
+    container_name: ghostfolio-ibkr-sync
+    depends_on:
+      - ghostfolio
+    env_file:
+      - path: ./config/healthchecks/ping-urls.env
+        required: false
+    environment:
+      OPERATION: SYNCIBKR
+      GHOST_HOST: http://ghostfolio:3333
+      GHOST_KEY: ${GHOSTFOLIO_SECURITY_TOKEN}
+      GHOST_CURRENCY: EUR
+      IBKR_ACCOUNT_ID: ${IBKR_ACCOUNT_ID}
+      IBKR_TOKEN: ${IBKR_FLEX_TOKEN}
+      IBKR_QUERY: ${IBKR_FLEX_QUERY_ID}
+      IBKR_FLEX_MAX_TRIES: ${IBKR_FLEX_MAX_TRIES:-60}
+      IBKR_FLEX_RETRY_DELAY_SECONDS: ${IBKR_FLEX_RETRY_DELAY_SECONDS:-30}
+      CRON: "30 6 * * *"
+      TZ: ${TZ}
+      HEALTHCHECKS_BASE_URL: http://healthchecks:8000
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID}
+      TELEGRAM_TOPIC_FINANCE: ${TELEGRAM_TOPIC_FINANCE}
+    volumes:
+      - ./config/ghostfolio/mapping.yaml:/usr/app/src/mapping.yaml:ro
+      - ./scripts/ghostfolio-ibkr-run.sh:/root/run.sh:ro
+      - ./scripts/ghostfolio-ibkr-strict-main.py:/usr/app/src/strict_main.py:ro
+    restart: unless-stopped
+
+  # CouchDB — sync backend for the wiki (obsidian-livesync).
+  # Devices replicate against it via Caddy (livesync.${STACK_HOST}.*); the
+  # livesync-bridge container mirrors it to plain markdown in config/wiki-vault.
+  # Write-heavy DB → named volume (SQLite/Colima postmortem rule); volume is
+  # rebuildable from the vault (docs/wiki-system.md → Versioning & Safety).
+  couchdb:
+    image: couchdb:3.5.2.1
+    container_name: couchdb
+    environment:
+      COUCHDB_USER: ${COUCHDB_USER}
+      COUCHDB_PASSWORD: ${COUCHDB_PASSWORD}
+    ports:
+      - "5984:5984"
+    volumes:
+      - couchdb-data:/opt/couchdb/data
+      - ./config/couchdb:/opt/couchdb/etc/local.d
+    restart: unless-stopped
+
+  # livesync-bridge — mirrors the CouchDB `wiki` db ⇄ plain markdown in
+  # config/wiki-vault so the wiki agent works on real files. No published
+  # image; built from a pinned clone in cache/build/ (docs/wiki-system.md
+  # documents the docker-obsidian fallback if this proves flaky).
+  livesync-bridge:
+    build:
+      context: ./cache/build/livesync-bridge
+    image: homelab-livesync-bridge:f27f78c
+    container_name: livesync-bridge
+    depends_on:
+      - couchdb
+    environment:
+      # inotify events don't cross the Colima virtiofs bind mount — without
+      # polling the bridge only notices vault changes on container restart.
+      CHOKIDAR_USEPOLLING: "true"
+      CHOKIDAR_INTERVAL: "10000"
+    volumes:
+      - ./config/livesync-bridge/config.json:/app/dat/config.json:ro
+      - ./config/livesync-bridge/data:/app/data
+      - ./config/wiki-vault:/app/vault
+    restart: unless-stopped
+
+  # Scheduler-neutral execution dashboard. launchd, container cron, and
+  # application schedulers stay authoritative and report start/success/failure
+  # here. SQLite lives on Colima's ext4 named volume, not a macOS bind mount.
+  healthchecks:
+    image: healthchecks/healthchecks:v4.2@sha256:6b5f593d40994345053f05f86decfa9e17ab1e4422df2ae58abd032a7b14d8f6
+    container_name: healthchecks
+    environment:
+      TZ: ${TZ}
+      DB: sqlite
+      DB_NAME: /data/hc.sqlite
+      SECRET_KEY_FILE: /data/secret-key
+      SITE_NAME: ${STACK_NAME} Jobs
+      SITE_ROOT: https://jobs.${STACK_HOST}.${PRIVATE_DOMAIN}
+      ALLOWED_HOSTS: jobs.${STACK_HOST}.${PRIVATE_DOMAIN},127.0.0.1,localhost,healthchecks
+      PING_ENDPOINT: https://jobs.${STACK_HOST}.${PRIVATE_DOMAIN}/ping/
+      REGISTRATION_OPEN: "False"
+      DEBUG: "False"
+      PING_BODY_LIMIT: "100000"
+      SECURE_PROXY_SSL_HEADER: HTTP_X_FORWARDED_PROTO,https
+      UWSGI_PROCESSES: "2"
+    ports:
+      # Same-host launchd pings and local bootstrap only; Caddy handles TLS.
+      - "127.0.0.1:8008:8000"
+    volumes:
+      - healthchecks-data:/data
+      - ./jobs:/opt/homelab/jobs:ro
+      - ./scripts/healthchecks-bootstrap.py:/opt/homelab/scripts/healthchecks-bootstrap.py:ro
+      - ./scripts/healthchecks-reconcile.py:/opt/homelab/scripts/healthchecks-reconcile.py:ro
+      - ./config/healthchecks:/opt/homelab/runtime
+    healthcheck:
+      test:
+        ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v3/status/', timeout=5)"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  caddy:
+    build:
+      context: ./docker/caddy
+    image: homelab-caddy-porkbun:2
+    container_name: caddy
+    environment:
+      PRIVATE_DOMAIN: ${PRIVATE_DOMAIN}
+      STACK_HOST: ${STACK_HOST}
+      PORKBUN_API_KEY: ${PORKBUN_API_KEY}
+      PORKBUN_API_SECRET_KEY: ${PORKBUN_API_SECRET_KEY}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./config/caddy/data:/data
+      - ./config/caddy/config:/config
+    restart: unless-stopped
+
+volumes:
+  jellyfin-config:
+    external: true
+    name: homelab_jellyfin-config
+  kuma-data:
+  karakeep-data:
+  karakeep-meili:
+  beszel-data:
+  beszel-agent-data:
+  beszel-socket:
+  couchdb-data:
+  healthchecks-data:
+    external: true
+    name: homelab_healthchecks-data
