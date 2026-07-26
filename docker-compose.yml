@@ -453,7 +453,7 @@ services:
   # Enable Banking (PSD2) + CSV/OFX imports into Firefly. Admin UI is available
   # through private Caddy HTTPS at importer.${STACK_HOST}.${PRIVATE_DOMAIN}.
   # /import holds saved import configs that the nightly firefly-cron autoimport
-  # call replays (Revolut pull).
+  # call replays (bank account pull).
   firefly-importer:
     image: fireflyiii/data-importer:version-2.3.4
     container_name: firefly-importer
@@ -480,7 +480,7 @@ services:
     restart: unless-stopped
 
   # Firefly housekeeping (recurring transactions, budgets) at 02:00 and the
-  # nightly Revolut autoimport at 02:30 — both before the 03:00 restic run
+  # nightly bank autoimport at 02:30 — both before the 03:00 restic run
   # stops firefly. The autoimport call no-ops until a saved import config
   # exists in /import.
   firefly-cron:
