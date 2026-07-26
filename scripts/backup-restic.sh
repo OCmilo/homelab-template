@@ -71,6 +71,24 @@ fi
 
 cd "${HOMELAB}"
 
+# Every service below is profile-gated, so an install that does not run a
+# module must not try to stop, exec into, or snapshot it: `docker compose stop`
+# on a disabled service fails the whole backup, and the rest would warn nightly
+# until the operator stopped reading the alerts.
+ENABLED_SERVICES="$(docker compose config --services 2>/dev/null || true)"
+# Empty means Compose could not read the project at all. Continuing would stop
+# nothing, snapshot nothing, and still report a clean backup.
+[ -n "${ENABLED_SERVICES}" ] || { echo "FATAL: docker compose config --services returned nothing" >&2; exit 1; }
+enabled() { printf '%s\n' "${ENABLED_SERVICES}" | grep -qxF -- "$1"; }
+
+SELECTED_SERVICES=()
+for service in "${SQLITE_SERVICES[@]}"; do
+  if enabled "${service}"; then
+    SELECTED_SERVICES+=("${service}")
+  fi
+done
+SQLITE_SERVICES=(${SELECTED_SERVICES[@]+"${SELECTED_SERVICES[@]}"})
+
 restart_services() {
   docker compose start "${SQLITE_SERVICES[@]}" >> "${LOG}" 2>&1 || {
     degrade "service restart failed — containers may still be stopped"
@@ -159,30 +177,42 @@ mirror_to_b2() {
 
 rm -rf "${SNAP_DIR}"
 mkdir -p "${SNAP_DIR}"
-run_timed 300 docker run --rm -v homelab_kuma-data:/data -v "${SNAP_DIR}:/snap" alpine sh -c \
-    'apk add -q sqlite && sqlite3 /data/kuma.db ".backup /snap/kuma-volume_kuma.db"' ||
-  degrade "kuma volume snapshot failed"
+if enabled uptime-kuma; then
+  run_timed 300 docker run --rm -v homelab_kuma-data:/data -v "${SNAP_DIR}:/snap" alpine sh -c \
+      'apk add -q sqlite && sqlite3 /data/kuma.db ".backup /snap/kuma-volume_kuma.db"' ||
+    degrade "kuma volume snapshot failed"
+fi
 
-run_timed 600 docker run --rm -v homelab_karakeep-data:/data -v "${SNAP_DIR}:/snap" alpine sh -c \
-    'apk add -q sqlite && sqlite3 /data/db.db ".backup /snap/karakeep-volume_db.db" && { [ ! -d /data/assets ] || tar czf /snap/karakeep-volume_assets.tgz -C /data assets; }' ||
-  degrade "karakeep volume snapshot failed"
+if enabled karakeep; then
+  run_timed 600 docker run --rm -v homelab_karakeep-data:/data -v "${SNAP_DIR}:/snap" alpine sh -c \
+      'apk add -q sqlite && sqlite3 /data/db.db ".backup /snap/karakeep-volume_db.db" && { [ ! -d /data/assets ] || tar czf /snap/karakeep-volume_assets.tgz -C /data assets; }' ||
+    degrade "karakeep volume snapshot failed"
+fi
 
-run_timed 900 docker compose exec -T paperless document_exporter ../export --delete --no-progress-bar ||
-  degrade "paperless export failed (raw data dir still backed up)"
+if enabled paperless; then
+  run_timed 900 docker compose exec -T paperless document_exporter ../export --delete --no-progress-bar ||
+    degrade "paperless export failed (raw data dir still backed up)"
+fi
 
-run_timed 300 docker compose exec -T ghostfolio-db sh -c \
-    'pg_dump -U ghostfolio -Fc ghostfolio > /dumps/ghostfolio.dump' ||
-  degrade "ghostfolio pg_dump failed (raw data dir still backed up)"
+if enabled ghostfolio-db; then
+  run_timed 300 docker compose exec -T ghostfolio-db sh -c \
+      'pg_dump -U ghostfolio -Fc ghostfolio > /dumps/ghostfolio.dump' ||
+    degrade "ghostfolio pg_dump failed (raw data dir still backed up)"
+fi
 
 run_timed 300 docker compose stop "${SQLITE_SERVICES[@]}" || fail "stopping services"
 
-run_timed 600 docker run --rm -v homelab_jellyfin-config:/data -v "${SNAP_DIR}:/snap" alpine sh -c \
-    'tar czf /snap/jellyfin-volume_config.tgz -C /data .' ||
-  degrade "jellyfin volume snapshot failed (raw named volume still exists)"
+if enabled jellyfin; then
+  run_timed 600 docker run --rm -v homelab_jellyfin-config:/data -v "${SNAP_DIR}:/snap" alpine sh -c \
+      'tar czf /snap/jellyfin-volume_config.tgz -C /data .' ||
+    degrade "jellyfin volume snapshot failed (raw named volume still exists)"
+fi
 
-run_timed 300 docker run --rm -v homelab_beszel-data:/data -v "${SNAP_DIR}:/snap" alpine sh -c \
-    'tar czf /snap/beszel-volume_data.tgz -C /data .' ||
-  degrade "beszel volume snapshot failed (raw named volume still exists)"
+if enabled beszel; then
+  run_timed 300 docker run --rm -v homelab_beszel-data:/data -v "${SNAP_DIR}:/snap" alpine sh -c \
+      'tar czf /snap/beszel-volume_data.tgz -C /data .' ||
+    degrade "beszel volume snapshot failed (raw named volume still exists)"
+fi
 
 run_timed 300 docker run --rm -v homelab_healthchecks-data:/data -v "${SNAP_DIR}:/snap" alpine sh -c \
     'tar czf /snap/healthchecks-volume_data.tgz -C /data .' ||

@@ -64,7 +64,11 @@ this file is the part that travels.
   enabling the dependency.
 - Anything that cannot exist on a fresh clone — a file holding credentials from
   another service, a build context fetched out of band — goes behind its own
-  opt-in profile. `docker compose up -d` on a clean checkout must succeed.
+  opt-in profile. A clean checkout must never fail `docker compose up -d` for
+  structural reasons: a missing bind-mount source, an uncreated volume, an
+  absent build context. Real credentials are a separate matter, and services
+  that gate on them still will not become healthy — gluetun without a
+  `NORDVPN_PRIVATE_KEY` is the one that takes four dependents down with it.
 - Pin images with full version tags once a service is stable; note the reason in
   the commit message.
 - Commit messages: conventional commits (feat/fix/chore), imperative mood.

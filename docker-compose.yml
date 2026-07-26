@@ -672,7 +672,9 @@ services:
       TZ: ${TZ}
       DB: sqlite
       DB_NAME: /data/hc.sqlite
-      SECRET_KEY: ${HEALTHCHECKS_SECRET_KEY}
+      # Refuse at `up` rather than crash-loop: Django rejects an empty
+      # SECRET_KEY, and an unset variable would resolve to one silently.
+      SECRET_KEY: ${HEALTHCHECKS_SECRET_KEY:?generate one with openssl rand -base64 48}
       # The reconciler skips jobs whose module is not an enabled profile.
       COMPOSE_PROFILES: ${COMPOSE_PROFILES:-}
       SITE_NAME: ${STACK_NAME} Jobs

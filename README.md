@@ -153,9 +153,9 @@ running `docker compose up` and working backwards.
   `monitoring` — and the rest never start. Caddy, Homepage and Healthchecks are
   always on. Nothing needs deleting from any YAML file.
 - **Which jobs you need.** Nothing: each entry in `jobs/jobs.json` names the
-  module that owns it, and both `scripts/install-jobs.sh` and the reconciler
-  skip the ones whose module is off. Turning a module off later also unloads
-  the launchd agents it installed.
+  module (or modules) that own it. `scripts/install-jobs.sh` installs only the
+  agents whose modules are all enabled and unloads the rest, and the reconciler
+  pauses the checks of anything switched off rather than leaving them to alert.
 - **Telegram routing.** The stack assumes one bot posting into a forum-style
   supergroup with a closed General topic, so every message carries a thread id.
   Set them in `.env`: `TELEGRAM_TOPIC_TRIVY`, `TELEGRAM_TOPIC_DIUN`,

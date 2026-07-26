@@ -175,7 +175,10 @@
     {
       "id": "karakeep-wiki-intake",
       "name": "Karakeep wiki intake",
-      "module": "wiki",
+      "module": [
+        "wiki",
+        "bookmarks"
+      ],
       "authority": "launchd",
       "source": "jobs/launchd/com.homelab.wiki-karakeep.plist",
       "command": "scripts/wiki-karakeep-pull.sh",
@@ -360,6 +363,23 @@
       "grace_seconds": 600,
       "risk": "low",
       "monitoring": "active"
+    },
+    {
+      "id": "wiki-ask-bridge",
+      "name": "Wiki ask bridge",
+      "module": "wiki",
+      "authority": "launchd",
+      "source": "jobs/launchd/com.homelab.wiki-ask.plist",
+      "command": "scripts/wiki-ask-server.py",
+      "purpose": "Read-only HTTP bridge that answers questions about the Obsidian vault for the wiki-dashboard plugin.",
+      "schedule": {
+        "type": "daemon"
+      },
+      "expected_duration_seconds": 0,
+      "grace_seconds": 0,
+      "risk": "low",
+      "monitoring": "catalog-only",
+      "notes": "KeepAlive daemon, not a timer: it is listed so module filtering can install and remove it, and it gets no check because it has no per-run completion."
     }
   ]
 }

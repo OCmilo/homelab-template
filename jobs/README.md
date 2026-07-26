@@ -22,9 +22,17 @@ docker compose exec healthchecks \
 ```
 
 Every job carries a `module` naming the `COMPOSE_PROFILES` entry that owns it,
-or `core` for jobs that run regardless. `scripts/install-jobs.sh` and the
-reconciler both skip jobs whose module is switched off, and the installer
-unloads agents belonging to a module you have since disabled.
+or `core` for jobs that run regardless. It may be a list when a job spans two
+modules, in which case all of them must be enabled.
+
+`scripts/install-jobs.sh` installs only the agents whose modules are enabled and
+unloads the rest. The reconciler still upserts every job, but pauses the checks
+of disabled ones — it never deletes, so skipping them outright would leave the
+old checks alerting forever.
+
+Agents that are not timers carry `"schedule": {"type": "daemon"}`. They are
+listed so module filtering can install and remove them, and they get no check:
+a KeepAlive process has no per-run completion to report.
 
 Reconciliation upserts by stable `id`, updates descriptions and schedules, and
 generates the gitignored `config/healthchecks/ping-urls.env`. It does not delete

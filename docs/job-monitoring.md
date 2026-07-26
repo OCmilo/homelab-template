@@ -124,8 +124,27 @@ recreate the instrumented container schedulers so they read the ping key:
 ```bash
 docker compose exec healthchecks \
   python /opt/homelab/scripts/healthchecks-reconcile.py
-docker compose up -d --force-recreate homepage firefly-cron ghostfolio-ibkr-sync
+docker compose up -d --force-recreate homepage firefly-cron
 ```
+
+Naming a service explicitly enables its profile, so do not add
+`ghostfolio-ibkr-sync` here unless `ibkr` is in `COMPOSE_PROFILES` — Compose
+would start the module you opted out of. Recreate it separately if you run it.
+
+Recreate the container before reconciling after either kind of change:
+
+```bash
+docker compose up -d --force-recreate healthchecks
+```
+
+Two reasons, and both are silent. `COMPOSE_PROFILES` is baked into the
+container's environment at creation, so a module change in `.env` is invisible
+until then. And the reconciler scripts are bind-mounted files: `git pull`
+replaces the inode, the running container keeps the old one, and the script it
+executes is whatever was there at start — which surfaces as a `SyntaxError`
+against a file that is perfectly valid on disk. `up -d` alone is not enough
+when nothing in the service definition changed; it reports `Running` and
+reattaches nothing.
 
 Change the temporary password immediately after the first remote login.
 

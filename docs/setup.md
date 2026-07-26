@@ -150,6 +150,14 @@ Only the modules in `COMPOSE_PROFILES` start. Nothing else needs creating
 first: every named volume is created on demand, and the services that
 bind-mount a file this repo cannot ship are gated behind their own profile.
 
+Credentials are the separate half of this. `up` will not fail for a missing
+file, but a service still needs its secrets to become healthy — and gluetun is
+the one that matters, because qBittorrent, Prowlarr, FlareSolverr and Shelfmark
+all wait on `condition: service_healthy`. With a placeholder
+`NORDVPN_PRIVATE_KEY` the tunnel never comes up and those four abort with
+"dependency failed to start". Set the VPN key before enabling `downloads`,
+`video` or `books`.
+
 Services with credentials to configure in their own UI on first run: Sonarr,
 Radarr, Prowlarr, Bazarr, Jellyseerr, Maintainerr, qBittorrent, Jellyfin,
 Karakeep, Paperless, Firefly III, Ghostfolio, Beszel, Uptime Kuma.
@@ -272,7 +280,7 @@ Tailscale. Beyond that:
 ```bash
 docker compose config          # substitutes cleanly, no 'variable is not set' warnings
 docker compose ps              # everything up and healthy
-scripts/install-jobs.sh        # all jobs report "unchanged"
+scripts/install-jobs.sh        # enabled jobs "unchanged", disabled ones "removed"
 TRIVY_NOTIFY=false scripts/trivy-scan.sh   # first vulnerability baseline
 ```
 

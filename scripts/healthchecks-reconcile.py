@@ -18,13 +18,28 @@ DEFAULT_KEY = pathlib.Path("/opt/homelab/runtime/management-api-key")
 DEFAULT_PING_KEY = pathlib.Path("/opt/homelab/runtime/ping-key")
 DEFAULT_OUTPUT = pathlib.Path("/opt/homelab/runtime/ping-urls.env")
 DEFAULT_STATE = pathlib.Path("/opt/homelab/runtime/reconcile-state.json")
-# Jobs tagged `core` belong to no optional module and are always installed.
+# Jobs tagged `core` belong to no optional module and always run.
 ALWAYS_ON_MODULE = "core"
+DISABLED = "disabled"
+# A long-running agent rather than a timer: it has no per-run completion to
+# report, so it is in the registry for installation only.
+DAEMON = "daemon"
 
 
 def enabled_modules() -> set[str]:
     profiles = os.environ.get("COMPOSE_PROFILES", "")
     return {ALWAYS_ON_MODULE, *(p.strip() for p in profiles.split(",") if p.strip())}
+
+
+def required_modules(job: dict) -> set[str]:
+    # A job may need more than one module: the Karakeep-to-vault pull is a wiki
+    # job that talks to the bookmarks stack.
+    module = job["module"]
+    return {module} if isinstance(module, str) else set(module)
+
+
+def monitoring_state(job: dict, enabled: set[str]) -> str:
+    return job["monitoring"] if required_modules(job) <= enabled else DISABLED
 
 
 def registry_timezone(registry: dict) -> str:
@@ -74,7 +89,15 @@ def load_registry(path: pathlib.Path) -> dict:
             raise ValueError(f"{job['id']}: duplicate id")
         if job["monitoring"] not in {"active", "catalog-only"}:
             raise ValueError(f"{job['id']}: invalid monitoring mode")
+        modules = required_modules(job)
+        if not modules or not all(isinstance(name, str) and name for name in modules):
+            raise ValueError(f"{job['id']}: module must be a name or a list of names")
         schedule = job["schedule"]
+        # Daemons are registered so that module filtering can install and
+        # remove their launchd agents; they never become checks.
+        if schedule.get("type") == DAEMON:
+            ids.add(job["id"])
+            continue
         if schedule.get("type") == "cron":
             if len(schedule.get("expression", "").split()) != 5:
                 raise ValueError(f"{job['id']}: invalid cron expression")
@@ -109,7 +132,7 @@ class Api:
             raise RuntimeError(f"Healthchecks API {exc.code}: {detail}") from exc
 
 
-def payload_for(job: dict, timezone: str) -> dict:
+def payload_for(job: dict, timezone: str, state: str) -> dict:
     description = "\n".join(
         [
             job["purpose"],
@@ -119,14 +142,15 @@ def payload_for(job: dict, timezone: str) -> dict:
             f"Command: {job['command']}",
             f"Expected duration: {job.get('expected_duration_seconds', 'unspecified')} seconds",
             f"Risk: {job.get('risk', 'unspecified')}",
-            f"Monitoring: {job['monitoring']}",
+            f"Module: {' + '.join(sorted(required_modules(job)))}",
+            f"Monitoring: {state}",
             *([f"Notes: {job['notes']}"] if job.get("notes") else []),
         ]
     )
     payload = {
         "name": job["name"],
         "slug": job["id"],
-        "tags": f"{job['authority']} {job['monitoring']} managed-by-git",
+        "tags": f"{job['authority']} {state} managed-by-git",
         "desc": description,
         "grace": int(job["grace_seconds"]),
         "methods": "POST",
@@ -158,12 +182,13 @@ def main() -> int:
         print(f"Valid registry: {len(registry['jobs'])} scheduled jobs")
         return 0
 
-    # A check for a module you do not run would sit red forever, so disabled
-    # modules are skipped rather than registered and paused.
+    # Jobs whose module is switched off are still upserted, then paused. They
+    # cannot simply be skipped: this reconciler never deletes, so a check left
+    # behind by a module you have since disabled would keep missing its window
+    # and alerting forever.
     modules = enabled_modules()
-    jobs = [job for job in registry["jobs"] if job["module"] in modules]
-    skipped = len(registry["jobs"]) - len(jobs)
     timezone = registry_timezone(registry)
+    jobs = [job for job in registry["jobs"] if job["schedule"]["type"] != DAEMON]
 
     key = args.api_key_file.read_text().strip()
     if not key:
@@ -178,33 +203,36 @@ def main() -> int:
         f"HEALTHCHECKS_PING_KEY={ping_key}",
     ]
     state = {"schema_version": 1, "jobs": []}
-    counts = {"active": 0, "catalog-only": 0}
+    counts = {"active": 0, "catalog-only": 0, DISABLED: 0}
 
     for job in jobs:
-        check = api.post("/checks/", payload_for(job, timezone))
+        monitoring = monitoring_state(job, modules)
+        check = api.post("/checks/", payload_for(job, timezone, monitoring))
         if check.get("slug") != job["id"]:
             raise ValueError(
                 f"{job['id']}: check slug is {check.get('slug')!r}; ping URL would not resolve"
             )
-        if job["monitoring"] == "catalog-only" and check.get("status") != "paused":
+        running = monitoring == "active"
+        paused = check.get("status") == "paused"
+        if not running and not paused:
             api.post(f"/checks/{check['uuid']}/pause")
-        elif job["monitoring"] == "active" and check.get("status") == "paused":
+        if running and paused:
             api.post(f"/checks/{check['uuid']}/resume")
         state["jobs"].append(
             {
                 "id": job["id"],
                 "uuid": check["uuid"],
-                "monitoring": job["monitoring"],
+                "monitoring": monitoring,
             }
         )
-        counts[job["monitoring"]] += 1
+        counts[monitoring] += 1
 
     write_secret(args.output, "\n".join(env_lines) + "\n")
     args.state.write_text(json.dumps(state, indent=2) + "\n")
     print(
         f"Reconciled {len(jobs)} checks: "
-        f"{counts['active']} active, {counts['catalog-only']} catalog-only"
-        f" ({skipped} skipped: module not enabled)"
+        f"{counts['active']} active, {counts['catalog-only']} catalog-only, "
+        f"{counts[DISABLED]} paused (module not enabled)"
     )
     return 0
 
