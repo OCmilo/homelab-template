@@ -731,8 +731,9 @@ volumes:
   # These are ordinary named volumes so a fresh clone needs no pre-created
   # state. Under the `homelab` project they resolve to the same
   # `homelab_<name>` volumes an older external declaration pointed at, so
-  # existing data is adopted rather than orphaned. The trade: `down -v` will
-  # now delete them.
+  # existing data is adopted rather than orphaned. The trade: `down -v` now
+  # deletes these too, where an `external: true` declaration made Compose skip
+  # them — see the hard rule in docs/conventions.md.
   jellyfin-config:
   kuma-data:
   karakeep-data:

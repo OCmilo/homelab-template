@@ -29,6 +29,15 @@ this file is the part that travels.
   wrong.
 - Remote access is Tailscale-only; nothing is forwarded on the router. Never
   propose exposing a service publicly.
+- NEVER run `docker compose down -v` (or `--volumes`). It deletes all nine
+  named volumes: Jellyfin's config and watch state, the Healthchecks database
+  and its full ping history, Uptime Kuma's history, Karakeep's bookmarks and
+  Meilisearch index, the CouchDB wiki backend, and Beszel's metrics. Plain
+  `down`, `stop`, `restart` and `up --force-recreate` never touch volumes —
+  only the explicit flag does. Two of these volumes used to be declared
+  `external: true`, which made Compose skip them; that guard covered two of
+  nine and is gone, so the rule replaces it. Recovery is the nightly export in
+  `config/db-snapshots/` via restic, not the volume itself.
 
 ## Conventions
 
