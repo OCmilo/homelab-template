@@ -18,6 +18,19 @@ DEFAULT_KEY = pathlib.Path("/opt/homelab/runtime/management-api-key")
 DEFAULT_PING_KEY = pathlib.Path("/opt/homelab/runtime/ping-key")
 DEFAULT_OUTPUT = pathlib.Path("/opt/homelab/runtime/ping-urls.env")
 DEFAULT_STATE = pathlib.Path("/opt/homelab/runtime/reconcile-state.json")
+# Jobs tagged `core` belong to no optional module and are always installed.
+ALWAYS_ON_MODULE = "core"
+
+
+def enabled_modules() -> set[str]:
+    profiles = os.environ.get("COMPOSE_PROFILES", "")
+    return {ALWAYS_ON_MODULE, *(p.strip() for p in profiles.split(",") if p.strip())}
+
+
+def registry_timezone(registry: dict) -> str:
+    # TZ is the single source of truth in .env; the registry value is only a
+    # fallback for a bare shell that has not sourced it.
+    return os.environ.get("TZ") or registry.get("timezone") or "UTC"
 
 
 def write_secret(path: pathlib.Path, value: str) -> None:
@@ -43,6 +56,7 @@ def load_registry(path: pathlib.Path) -> dict:
         required = {
             "id",
             "name",
+            "module",
             "authority",
             "source",
             "command",
@@ -144,6 +158,13 @@ def main() -> int:
         print(f"Valid registry: {len(registry['jobs'])} scheduled jobs")
         return 0
 
+    # A check for a module you do not run would sit red forever, so disabled
+    # modules are skipped rather than registered and paused.
+    modules = enabled_modules()
+    jobs = [job for job in registry["jobs"] if job["module"] in modules]
+    skipped = len(registry["jobs"]) - len(jobs)
+    timezone = registry_timezone(registry)
+
     key = args.api_key_file.read_text().strip()
     if not key:
         raise SystemExit("empty Healthchecks management API key")
@@ -159,8 +180,8 @@ def main() -> int:
     state = {"schema_version": 1, "jobs": []}
     counts = {"active": 0, "catalog-only": 0}
 
-    for job in registry["jobs"]:
-        check = api.post("/checks/", payload_for(job, registry["timezone"]))
+    for job in jobs:
+        check = api.post("/checks/", payload_for(job, timezone))
         if check.get("slug") != job["id"]:
             raise ValueError(
                 f"{job['id']}: check slug is {check.get('slug')!r}; ping URL would not resolve"
@@ -181,8 +202,9 @@ def main() -> int:
     write_secret(args.output, "\n".join(env_lines) + "\n")
     args.state.write_text(json.dumps(state, indent=2) + "\n")
     print(
-        f"Reconciled {len(registry['jobs'])} checks: "
+        f"Reconciled {len(jobs)} checks: "
         f"{counts['active']} active, {counts['catalog-only']} catalog-only"
+        f" ({skipped} skipped: module not enabled)"
     )
     return 0
 

@@ -141,19 +141,21 @@ running `docker compose up` and working backwards.
 
 ## What you'll want to change
 
-- **`.env`.** Copy `.env.example` and work through it. `STACK_HOST`,
-  `STACK_NAME`, and `PRIVATE_DOMAIN` define every URL in the stack and the
-  names on the certificates. `DATA_ROOT`, `TZ`, `PUID`/`PGID`, `LAN_IP`,
-  `LAN_SUBNET`, and `TAILSCALE_IP` describe your machine and network.
+- **`.env`, and only `.env`.** Copy `.env.example` and work through it. It is
+  the single file you edit: `docker-compose.yml`, the `Caddyfile` and
+  `jobs/jobs.json` all read from it. `STACK_HOST`, `STACK_NAME`, and
+  `PRIVATE_DOMAIN` define every URL in the stack and the names on the
+  certificates. `DATA_ROOT`, `TZ`, `PUID`/`PGID`, `LAN_IP`, `LAN_SUBNET`, and
+  `TAILSCALE_IP` describe your machine and network.
 - **Which services you actually want.** The compose file is a menu, not a
-  contract. Delete the finance block, or the wiki block, or the books block —
-  they have no dependencies on each other. Remove the matching `Caddyfile`
-  blocks so nothing routes to a container that no longer exists.
-- **Which jobs you need.** Drop the entries from `jobs/jobs.json`, delete the
-  matching `jobs/launchd/*.plist` templates, and re-run
-  `scripts/install-jobs.sh`. The reconciler upserts by stable id and will not
-  delete checks it does not manage, so remove unwanted checks in the
-  Healthchecks UI once.
+  contract, and `COMPOSE_PROFILES` is how you order from it. List the modules
+  you want — `video`, `books`, `documents`, `bookmarks`, `wiki`, `finance`,
+  `monitoring` — and the rest never start. Caddy, Homepage and Healthchecks are
+  always on. Nothing needs deleting from any YAML file.
+- **Which jobs you need.** Nothing: each entry in `jobs/jobs.json` names the
+  module that owns it, and both `scripts/install-jobs.sh` and the reconciler
+  skip the ones whose module is off. Turning a module off later also unloads
+  the launchd agents it installed.
 - **Telegram routing.** The stack assumes one bot posting into a forum-style
   supergroup with a closed General topic, so every message carries a thread id.
   Set them in `.env`: `TELEGRAM_TOPIC_TRIVY`, `TELEGRAM_TOPIC_DIUN`,
@@ -179,14 +181,14 @@ Linux without work.
 plists resolve paths from `$HOME/homelab`. Cloning somewhere else means editing
 those paths.
 
-**The compose project name matters.** Two volumes are declared `external` and
-referenced as `homelab_jellyfin-config` and `homelab_healthchecks-data`. You
-create them before the first start, and the rest of the named volumes get the
-same prefix from the project name.
+**The compose project name matters.** Named volumes take the project name as
+their prefix, and `scripts/backup-restic.sh` looks them up by the literal
+`homelab_` prefix. Cloning into a differently named directory breaks that.
 
 **Some pieces need a manual fetch.** The AdGuard Home binary is downloaded by
 hand into `bin/`. The `livesync-bridge` image has no upstream publication and
-is built from a pinned clone you place under `cache/build/`.
+is built from a pinned clone you place under `cache/build/` — which is why it
+sits behind its own `wiki-bridge` profile rather than blocking the first `up`.
 
 **The finance and wiki modules assume you run those applications.** The Firefly
 scripts assume Firefly is populated and that you use its rules and categories;

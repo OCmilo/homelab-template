@@ -1,10 +1,11 @@
 {
   "schema_version": 1,
-  "timezone": "Europe/Madrid",
+  "timezone": "UTC",
   "jobs": [
     {
       "id": "restic-backup",
       "name": "Restic backup",
+      "module": "core",
       "authority": "launchd",
       "source": "jobs/launchd/com.homelab.backup.plist",
       "command": "scripts/backup-restic.sh",
@@ -21,6 +22,7 @@
     {
       "id": "enable-banking-consent-reminder",
       "name": "Enable Banking consent reminder",
+      "module": "finance",
       "authority": "launchd",
       "source": "jobs/launchd/com.homelab.eb-consent-reminder.plist",
       "command": "scripts/eb-consent-reminder.sh",
@@ -37,6 +39,7 @@
     {
       "id": "ghostfolio-cash-sync",
       "name": "Ghostfolio cash sync",
+      "module": "finance",
       "authority": "launchd",
       "source": "jobs/launchd/com.homelab.ghostfolio-cash-sync.plist",
       "command": "scripts/ghostfolio-cash-sync.py",
@@ -53,6 +56,7 @@
     {
       "id": "subtitle-translation-fallback",
       "name": "Subtitle translation fallback",
+      "module": "video",
       "authority": "launchd",
       "source": "jobs/launchd/com.homelab.subtitle-translate.plist",
       "command": "scripts/subtitle-translate-fallback.py",
@@ -69,6 +73,7 @@
     {
       "id": "trivy-vulnerability-scan",
       "name": "Trivy vulnerability scan",
+      "module": "core",
       "authority": "launchd",
       "source": "jobs/launchd/com.homelab.trivy-scan.plist",
       "command": "scripts/trivy-scan.sh",
@@ -85,6 +90,7 @@
     {
       "id": "weekly-finance-digest",
       "name": "Weekly finance digest",
+      "module": "finance",
       "authority": "launchd",
       "source": "jobs/launchd/com.homelab.weekly-digest.plist",
       "command": "scripts/weekly-digest.py",
@@ -101,6 +107,7 @@
     {
       "id": "wiki-note-enrichment",
       "name": "Wiki note enrichment",
+      "module": "wiki",
       "authority": "launchd",
       "source": "jobs/launchd/com.homelab.wiki-agent-enrich.plist",
       "command": "scripts/wiki-agent.sh enrich-note",
@@ -117,6 +124,7 @@
     {
       "id": "wiki-inbox-ingestion",
       "name": "Wiki inbox ingestion",
+      "module": "wiki",
       "authority": "launchd",
       "source": "jobs/launchd/com.homelab.wiki-agent-ingest.plist",
       "command": "scripts/wiki-agent.sh ingest-inbox",
@@ -133,6 +141,7 @@
     {
       "id": "wiki-lint",
       "name": "Wiki lint",
+      "module": "wiki",
       "authority": "launchd",
       "source": "jobs/launchd/com.homelab.wiki-agent-lint.plist",
       "command": "scripts/wiki-agent.sh lint-wiki",
@@ -149,6 +158,7 @@
     {
       "id": "wiki-map-of-content-refresh",
       "name": "Wiki map-of-content refresh",
+      "module": "wiki",
       "authority": "launchd",
       "source": "jobs/launchd/com.homelab.wiki-agent-moc.plist",
       "command": "scripts/wiki-agent.sh refresh-moc",
@@ -165,6 +175,7 @@
     {
       "id": "karakeep-wiki-intake",
       "name": "Karakeep wiki intake",
+      "module": "wiki",
       "authority": "launchd",
       "source": "jobs/launchd/com.homelab.wiki-karakeep.plist",
       "command": "scripts/wiki-karakeep-pull.sh",
@@ -181,6 +192,7 @@
     {
       "id": "wiki-podcast-transcription",
       "name": "Wiki podcast transcription",
+      "module": "wiki",
       "authority": "launchd",
       "source": "jobs/launchd/com.homelab.wiki-podcast.plist",
       "command": "scripts/wiki-podcast-transcribe.sh",
@@ -197,6 +209,7 @@
     {
       "id": "firefly-housekeeping",
       "name": "Firefly housekeeping",
+      "module": "finance",
       "authority": "container-cron",
       "source": "scripts/firefly-cron-run.sh",
       "command": "firefly-cron-run.sh housekeeping",
@@ -213,6 +226,7 @@
     {
       "id": "firefly-autoimport",
       "name": "Firefly autoimport",
+      "module": "finance",
       "authority": "container-cron",
       "source": "scripts/firefly-cron-run.sh",
       "command": "firefly-cron-run.sh autoimport",
@@ -229,6 +243,7 @@
     {
       "id": "ghostfolio-ibkr-sync",
       "name": "Ghostfolio IBKR sync",
+      "module": "ibkr",
       "authority": "application-cron",
       "source": "docker-compose.yml#ghostfolio-ibkr-sync",
       "command": "/root/run.sh",
@@ -245,6 +260,7 @@
     {
       "id": "diun-image-update-scan",
       "name": "Diun image update scan",
+      "module": "monitoring",
       "authority": "application-cron",
       "source": "docker-compose.yml#diun",
       "command": "Diun internal scheduler",
@@ -262,6 +278,7 @@
     {
       "id": "recyclarr-trash-sync",
       "name": "Recyclarr TRaSH sync",
+      "module": "video",
       "authority": "application-cron",
       "source": "docker-compose.yml#recyclarr",
       "command": "Recyclarr internal scheduler",
@@ -279,6 +296,7 @@
     {
       "id": "firefly-uncategorized-alert",
       "name": "Firefly uncategorized transaction alert",
+      "module": "finance",
       "authority": "launchd",
       "source": "jobs/launchd/com.homelab.firefly-uncategorized-alert.plist",
       "command": "scripts/firefly-uncategorized-alert.py",
@@ -295,6 +313,7 @@
     {
       "id": "firefly-normalize-merchants",
       "name": "Firefly merchant normalization",
+      "module": "finance",
       "authority": "launchd",
       "source": "jobs/launchd/com.homelab.firefly-normalize-merchants.plist",
       "command": "scripts/firefly-normalize-merchants.py",
@@ -311,6 +330,7 @@
     {
       "id": "firefly-autocategorize",
       "name": "Firefly category learning",
+      "module": "finance",
       "authority": "launchd",
       "source": "jobs/launchd/com.homelab.firefly-autocategorize.plist",
       "command": "scripts/firefly-autocategorize.py",
@@ -327,6 +347,7 @@
     {
       "id": "firefly-rules-drift",
       "name": "Firefly rules drift check",
+      "module": "finance",
       "authority": "launchd",
       "source": "jobs/launchd/com.homelab.firefly-rules-drift.plist",
       "command": "scripts/firefly-rules-drift.py",

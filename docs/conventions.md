@@ -44,6 +44,18 @@ this file is the part that travels.
 - Secrets live in `.env` (gitignored); `.env.example` documents every variable
   with placeholder values only. Quote any value containing spaces — shell
   scripts source this file.
+- `.env` is the only file an operator edits to shape an install. Machine facts,
+  locale, currency and module selection belong there, never hardcoded in
+  `docker-compose.yml`, the `Caddyfile` or `jobs/jobs.json`. A new deployment
+  fact means a new documented variable, not a literal in YAML.
+- Selecting services means editing `COMPOSE_PROFILES`, never deleting service
+  blocks. Every service carries a profile except Caddy, Homepage and
+  Healthchecks. A service whose `depends_on` target sits in another profile
+  must list that profile too: Compose rejects the project outright rather than
+  enabling the dependency.
+- Anything that cannot exist on a fresh clone — a file holding credentials from
+  another service, a build context fetched out of band — goes behind its own
+  opt-in profile. `docker compose up -d` on a clean checkout must succeed.
 - Pin images with full version tags once a service is stable; note the reason in
   the commit message.
 - Commit messages: conventional commits (feat/fix/chore), imperative mood.

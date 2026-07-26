@@ -65,9 +65,19 @@ cd ~/homelab
 cp .env.example .env
 ```
 
-Then edit `.env`. Every variable is documented inline; the ones that decide the
-shape of your install are at the top:
+`.env` is the only file you edit. Which services run, what they are called, and
+where they store things are all decided there; `docker-compose.yml`, the
+`Caddyfile` and `jobs/jobs.json` read it and should not need changes.
 
+Every variable is documented inline. The ones that decide the shape of your
+install are at the top:
+
+- `COMPOSE_PROFILES` — which modules you want. The stack is a menu: listed
+  modules start, everything else stays stopped and its scheduled jobs are never
+  installed. Caddy, Homepage and Healthchecks are always on. `video` and
+  `books` pull in the `downloads` tunnel stack automatically, because Compose
+  rejects a `depends_on` that crosses into a disabled profile rather than
+  quietly enabling it.
 - `STACK_HOST` — the subdomain label everything lives under. With
   `STACK_HOST=homelab` and `PRIVATE_DOMAIN=example.com`, Jellyfin is at
   `https://jellyfin.homelab.example.com`.
@@ -90,7 +100,7 @@ without echoing it and writes the derived key into `.env`.
 
 ### Things that assume the reference layout
 
-Four assumptions are baked in deeply enough that changing them means editing
+Two assumptions are baked in deeply enough that changing them means editing
 code, not configuration. Read these before you deviate:
 
 - **The repo defaults to `~/homelab`.** `scripts/install-jobs.sh` stamps the
@@ -98,33 +108,10 @@ code, not configuration. Read these before you deviate:
   `HOMELAB` environment variable, so scheduled jobs work from any path. Running
   a script by hand gets no such environment: export `HOMELAB=/your/path` first,
   or it will silently operate on `~/homelab` instead.
-- **The compose project is named `homelab`.** Two volumes are declared
-  `external: true` with literal names (`homelab_jellyfin-config`,
-  `homelab_healthchecks-data`), and `scripts/backup-restic.sh` exports several
-  volumes by their `homelab_` prefix. Cloning into a differently named directory
-  changes the prefix and breaks both. Create the external volumes before the
-  first `up`:
-  `docker volume create homelab_jellyfin-config && docker volume create homelab_healthchecks-data`.
-- **Two dependencies are fetched out of band, and one of them blocks the first
-  `up`.** `livesync-bridge` builds from a source clone because upstream
-  publishes no image, and its build context is gitignored — so `docker compose
-  up -d` fails on a fresh checkout until you create it. Do this before step 4,
-  or skip it and delete the `livesync-bridge` service if you are not running
-  the wiki:
-
-  ```bash
-  git clone https://github.com/vrtmrz/livesync-bridge.git cache/build/livesync-bridge
-  git -C cache/build/livesync-bridge checkout f27f78c   # matches the pinned image tag
-  ```
-
-  Separately, `scripts/install-adguardhome-host.sh` expects the AdGuard Home
-  binary at `bin/AdGuardHome`. Download the build for your architecture — the
-  URL in the script is `darwin_amd64`, which is wrong on Apple Silicon.
-- **Locale defaults are European.** Paperless OCR is `por+spa+eng`, Ghostfolio
-  reports in EUR, schedules assume `Europe/Madrid` (also force-set on the
-  Healthchecks profile by `scripts/healthchecks-bootstrap.py`), and subtitle
-  translation targets `SUBTRANS_LANGS`. Change them in `docker-compose.yml`,
-  `jobs/jobs.json`, `scripts/healthchecks-bootstrap.py`, and `.env` as needed.
+- **The compose project is named `homelab`.** Named volumes take the project
+  name as their prefix, and `scripts/backup-restic.sh` exports several of them
+  by the literal `homelab_` prefix. Cloning into a differently named directory
+  changes the prefix and the backup script stops finding them.
 
 ## 3. Storage layout
 
@@ -159,21 +146,26 @@ Then bring up the rest:
 docker compose up -d
 ```
 
+Only the modules in `COMPOSE_PROFILES` start. Nothing else needs creating
+first: every named volume is created on demand, and the services that
+bind-mount a file this repo cannot ship are gated behind their own profile.
+
 Services with credentials to configure in their own UI on first run: Sonarr,
 Radarr, Prowlarr, Bazarr, Jellyseerr, Maintainerr, qBittorrent, Jellyfin,
 Karakeep, Paperless, Firefly III, Ghostfolio, Beszel, Uptime Kuma.
 
-Four services bind-mount a **file** that this repo does not ship. Docker
-silently creates a directory in place of a missing bind-mount source, and the
-container then fails on a directory where it expected a file — so create each
-one (or drop the service) before starting it:
+Three modules stay off until you hand them something that cannot exist yet.
+Add each to `COMPOSE_PROFILES` once its prerequisite is in place:
 
-| File | Needed by |
+| Profile | Waiting on |
 |---|---|
-| `config/decluttarr/config.yaml` | decluttarr — see upstream's sample config |
-| `config/ghostfolio/mapping.yaml` | the IBKR sync; maps symbols to Ghostfolio assets |
-| `config/firefly-importer/eb-private.pem` | Enable Banking; `chmod 600` |
-| `config/livesync-bridge/config.json` | the wiki bridge — `docs/wiki-system.md` |
+| `decluttarr` | `config/decluttarr/config.yaml` with Sonarr/Radarr API keys, which only exist after those services' first run |
+| `ibkr` | an IBKR Flex query, plus `config/ghostfolio/mapping.yaml` mapping your own holdings |
+| `wiki-bridge` | `config/livesync-bridge/config.json` (`docs/wiki-system.md`) and a pinned source clone, since upstream publishes no image: `git clone https://github.com/vrtmrz/livesync-bridge.git cache/build/livesync-bridge && git -C cache/build/livesync-bridge checkout f27f78c` |
+
+Enable Banking is the exception that needs no profile: drop its key at
+`config/firefly-importer/secrets/eb-private.pem` (`chmod 600`) whenever you get
+it. That directory is mounted at `/secrets`, so the importer starts without it.
 
 The downloads group (qBittorrent, Prowlarr, FlareSolverr, Shelfmark) runs inside
 gluetun's network namespace. Consequences worth internalizing: those containers
@@ -214,8 +206,13 @@ scripts/install-jobs.sh
 The plists in `jobs/launchd/` are templates containing `@@HOME@@`; the installer
 stamps your home directory, writes them to `~/Library/LaunchAgents/`, and loads
 anything that changed. It is safe to re-run — unchanged jobs are skipped — and
-you should re-run it after pulling changes that touch a plist. Delete the jobs
-you do not want from `jobs/launchd/` and `jobs/jobs.json` before installing.
+you should re-run it after pulling changes that touch a plist.
+
+Every job carries a `module` in `jobs/jobs.json`. Both the installer and the
+reconciler skip jobs whose module is not in `COMPOSE_PROFILES`, and the
+installer unloads and deletes agents for a module you have since switched off,
+so a disabled module cannot leave a job failing nightly. Jobs tagged `core`
+(backups, the Trivy scan) always install.
 
 ## 6. Backups
 
@@ -240,14 +237,18 @@ scripts/install-adguardhome-host.sh      # installs + starts the launchd service
 scripts/set-adguard-password.sh          # sets the admin password
 ```
 
+The installer expects the AdGuard Home binary at `bin/AdGuardHome` and downloads
+`darwin_amd64`, which is the wrong build on Apple Silicon — fetch the one for
+your architecture by hand first.
+
 Then add DNS rewrites for `*.${STACK_HOST}.${PRIVATE_DOMAIN}` pointing at
 `LAN_IP`, and point your router or clients at this machine for DNS. Devices on
 Tailscale can use split DNS instead.
 
 ## 8. Optional modules
 
-Each of these is self-contained; skip any you do not want by removing its
-services from `docker-compose.yml` and its jobs from `jobs/jobs.json`.
+Each of these is self-contained; skip any you do not want by leaving its
+profile out of `COMPOSE_PROFILES`.
 
 - **Finance** — Firefly III, its data importer, and Ghostfolio, plus the
   categorization and sync tooling in `scripts/firefly-*.py` and

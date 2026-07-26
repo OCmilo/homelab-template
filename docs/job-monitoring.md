@@ -44,9 +44,11 @@ application, wrapper, or hook emits telemetry.
 timer currently in use. Each entry has:
 
 - stable ID and display name;
+- the module that owns it, matching a `COMPOSE_PROFILES` entry (or `core` for
+  jobs that always run);
 - schedule authority and source file;
 - command and purpose;
-- cron expression or interval, always interpreted in `Europe/Madrid`;
+- cron expression or interval, interpreted in `TZ` from `.env`;
 - expected duration and missed-run grace;
 - risk classification;
 - active or catalog-only monitoring state.
@@ -72,7 +74,9 @@ docker compose exec healthchecks \
 
 The reconciler uses Management API v3, upserts by stable slug, pauses
 catalog-only jobs, and writes `config/healthchecks/ping-urls.env`. It will not
-delete unmanaged checks.
+delete unmanaged checks. Jobs whose module is not in `COMPOSE_PROFILES` are
+skipped rather than registered — a check for a module you do not run would sit
+red forever.
 
 ## Runtime and access
 
@@ -94,16 +98,16 @@ DNS. Container jobs use `http://healthchecks:8000`. Browsers use Caddy HTTPS.
 
 ## Bootstrap
 
-The signing key must exist in the named volume before first start:
+Set `HEALTHCHECKS_SECRET_KEY` in `.env` (`openssl rand -base64 48`), then:
 
 ```bash
-docker volume create homelab_healthchecks-data
-docker run --rm -u root -v homelab_healthchecks-data:/data alpine:3.22 \
-  sh -c 'chown 999:999 /data && umask 077 && \
-  head -c 48 /dev/urandom | base64 > /data/secret-key && \
-  chown 999:999 /data/secret-key'
 docker compose up -d healthchecks caddy
 ```
+
+The Django signing key is an environment variable rather than a file seeded
+into the volume, so nothing has to be created before the first start. Rotating
+it invalidates sessions and password-reset links; stored passwords and existing
+checks are unaffected.
 
 Create the administrator and project with a temporary password:
 

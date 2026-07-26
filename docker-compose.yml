@@ -25,6 +25,7 @@ services:
   jellyfin:
     image: jellyfin/jellyfin:10.11.11
     container_name: jellyfin
+    profiles: [video]
     environment:
       TZ: ${TZ}
     ports:
@@ -38,6 +39,7 @@ services:
   gluetun:
     image: qmcgaw/gluetun:latest@sha256:b0ee2135e6ba52ad3f102aae9663707cd1c9531485117067a380d3b2b6dd991d
     container_name: gluetun
+    profiles: [downloads, video, books]
     cap_add:
       - NET_ADMIN
     devices:
@@ -67,6 +69,7 @@ services:
   qbittorrent:
     image: lscr.io/linuxserver/qbittorrent:5.2.2_v2.0.13-ls464
     container_name: qbittorrent
+    profiles: [downloads, video, books]
     network_mode: "service:gluetun"
     depends_on:
       gluetun:
@@ -82,6 +85,7 @@ services:
   prowlarr:
     image: lscr.io/linuxserver/prowlarr:2.4.0.5397-ls152
     container_name: prowlarr
+    profiles: [downloads, video, books]
     network_mode: "service:gluetun"
     depends_on:
       gluetun:
@@ -95,6 +99,7 @@ services:
   flaresolverr:
     image: ghcr.io/flaresolverr/flaresolverr:v3.5.0
     container_name: flaresolverr
+    profiles: [downloads, video, books]
     network_mode: "service:gluetun"
     depends_on:
       gluetun:
@@ -107,6 +112,7 @@ services:
   sonarr:
     image: lscr.io/linuxserver/sonarr:4.0.19.2979-ls317
     container_name: sonarr
+    profiles: [video]
     environment:
       <<: *common-env
     ports:
@@ -119,6 +125,7 @@ services:
   radarr:
     image: lscr.io/linuxserver/radarr:6.2.1.10461-ls308
     container_name: radarr
+    profiles: [video]
     environment:
       <<: *common-env
     ports:
@@ -133,6 +140,7 @@ services:
   decluttarr:
     image: ghcr.io/manimatter/decluttarr:v2.1.0
     container_name: decluttarr
+    profiles: [decluttarr]
     environment:
       TZ: ${TZ}
     volumes:
@@ -146,6 +154,7 @@ services:
   bazarr:
     image: lscr.io/linuxserver/bazarr:v1.6.0-ls354
     container_name: bazarr
+    profiles: [video]
     environment:
       <<: *common-env
     ports:
@@ -158,6 +167,7 @@ services:
   jellyseerr:
     image: ghcr.io/seerr-team/seerr:v3.3.0
     container_name: jellyseerr
+    profiles: [video]
     init: true
     environment:
       TZ: ${TZ}
@@ -172,6 +182,7 @@ services:
   maintainerr:
     image: ghcr.io/maintainerr/maintainerr:3.17.1
     container_name: maintainerr
+    profiles: [video]
     user: "${PUID}:${PGID}"
     environment:
       TZ: ${TZ}
@@ -184,6 +195,7 @@ services:
   audiobookshelf:
     image: ghcr.io/advplyr/audiobookshelf:2.35.1
     container_name: audiobookshelf
+    profiles: [books]
     ports:
       - "13378:80"
     volumes:
@@ -196,6 +208,7 @@ services:
   calibre-web-automated:
     image: crocodilestick/calibre-web-automated:v4.0.6
     container_name: calibre-web-automated
+    profiles: [books]
     environment:
       PUID: ${PUID}
       PGID: ${PGID}
@@ -221,6 +234,7 @@ services:
   shelfmark:
     image: ghcr.io/calibrain/shelfmark:v1.3.2
     container_name: shelfmark
+    profiles: [books]
     network_mode: "service:gluetun"
     depends_on:
       gluetun:
@@ -260,6 +274,7 @@ services:
   beszel:
     image: henrygd/beszel:0.18.7
     container_name: beszel
+    profiles: [monitoring]
     environment:
       APP_URL: https://beszel.${STACK_HOST}.${PRIVATE_DOMAIN}
       CHECK_UPDATES: "false"
@@ -277,6 +292,7 @@ services:
   beszel-agent:
     image: henrygd/beszel-agent:0.18.7
     container_name: beszel-agent
+    profiles: [monitoring]
     depends_on:
       - beszel
     env_file:
@@ -297,6 +313,7 @@ services:
   uptime-kuma:
     image: louislam/uptime-kuma:2
     container_name: uptime-kuma
+    profiles: [monitoring]
     ports:
       - "3001:3001"
     volumes:
@@ -307,6 +324,7 @@ services:
   dozzle:
     image: amir20/dozzle:v10.6.8
     container_name: dozzle
+    profiles: [monitoring]
     environment:
       DOZZLE_ENABLE_ACTIONS: "false"
     ports:
@@ -320,6 +338,7 @@ services:
   diun:
     image: crazymax/diun:4.33.0
     container_name: diun
+    profiles: [monitoring]
     environment:
       TZ: ${TZ}
       DIUN_WATCH_SCHEDULE: "0 8 * * *"
@@ -337,6 +356,7 @@ services:
   recyclarr:
     image: ghcr.io/recyclarr/recyclarr:8.6.0
     container_name: recyclarr
+    profiles: [video]
     environment:
       TZ: ${TZ}
       CRON_SCHEDULE: "0 5 * * 1"
@@ -354,6 +374,7 @@ services:
   paperless-redis:
     image: redis:8-alpine
     container_name: paperless-redis
+    profiles: [documents]
     command: redis-server --requirepass ${PAPERLESS_REDIS_PASSWORD}
     networks:
       - paperless-net
@@ -362,6 +383,7 @@ services:
   paperless:
     image: ghcr.io/paperless-ngx/paperless-ngx:3.0.3
     container_name: paperless
+    profiles: [documents]
     depends_on:
       - paperless-redis
     environment:
@@ -374,8 +396,8 @@ services:
       PAPERLESS_CSRF_TRUSTED_ORIGINS: https://paperless.${STACK_HOST}.${PRIVATE_DOMAIN},http://${LAN_IP}:8000,http://${TAILSCALE_IP}:8000
       # "paperless" (bare container name) is required for Kuma/Homepage probes
       PAPERLESS_ALLOWED_HOSTS: paperless.${STACK_HOST}.${PRIVATE_DOMAIN},paperless,${LAN_IP},${TAILSCALE_IP},localhost
-      PAPERLESS_OCR_LANGUAGE: por+spa+eng
-      PAPERLESS_OCR_LANGUAGES: por spa
+      PAPERLESS_OCR_LANGUAGE: ${PAPERLESS_OCR_LANGUAGE:-eng}
+      PAPERLESS_OCR_LANGUAGES: ${PAPERLESS_OCR_LANGUAGES:-}
       PAPERLESS_ADMIN_USER: ${PAPERLESS_ADMIN_USER}
       PAPERLESS_ADMIN_PASSWORD: ${PAPERLESS_ADMIN_PASSWORD}
     ports:
@@ -396,6 +418,7 @@ services:
   karakeep:
     image: ghcr.io/karakeep-app/karakeep:0.32.0
     container_name: karakeep
+    profiles: [bookmarks]
     depends_on:
       - karakeep-chrome
       - karakeep-meilisearch
@@ -419,6 +442,7 @@ services:
   karakeep-chrome:
     image: gcr.io/zenika-hub/alpine-chrome:124
     container_name: karakeep-chrome
+    profiles: [bookmarks]
     command:
       - --no-sandbox
       - --disable-gpu
@@ -431,6 +455,7 @@ services:
   karakeep-meilisearch:
     image: getmeili/meilisearch:v1.49.0
     container_name: karakeep-meilisearch
+    profiles: [bookmarks]
     environment:
       MEILI_NO_ANALYTICS: "true"
       MEILI_MASTER_KEY: ${KARAKEEP_MEILI_MASTER_KEY}
@@ -444,6 +469,7 @@ services:
   firefly:
     image: fireflyiii/core:version-6.6.6
     container_name: firefly
+    profiles: [finance]
     environment:
       APP_KEY: ${FIREFLY_APP_KEY}
       DB_CONNECTION: sqlite
@@ -465,6 +491,7 @@ services:
   firefly-importer:
     image: fireflyiii/data-importer:version-2.3.4
     container_name: firefly-importer
+    profiles: [finance]
     depends_on:
       - firefly
     environment:
@@ -484,7 +511,11 @@ services:
       - "8087:8080"
     volumes:
       - ./config/firefly-importer/import:/import
-      - ./config/firefly-importer/eb-private.pem:/secrets/eb-private.pem:ro
+      # A directory, not the key file itself: Docker silently creates a
+      # directory where a bind-mount source is missing, and the importer then
+      # dies on a directory where it wanted a PEM. Mounting the parent lets the
+      # stack start before the Enable Banking key exists.
+      - ./config/firefly-importer/secrets:/secrets:ro
     restart: unless-stopped
 
   # Firefly housekeeping (recurring transactions, budgets) at 02:00 and the
@@ -494,6 +525,7 @@ services:
   firefly-cron:
     image: alpine:3.22
     container_name: firefly-cron
+    profiles: [finance]
     env_file:
       - path: ./config/healthchecks/ping-urls.env
         required: false
@@ -512,6 +544,7 @@ services:
   ghostfolio:
     image: ghostfolio/ghostfolio:3.24.0
     container_name: ghostfolio
+    profiles: [finance, ibkr]
     depends_on:
       - ghostfolio-db
       - ghostfolio-redis
@@ -533,6 +566,7 @@ services:
   ghostfolio-db:
     image: postgres:15-alpine
     container_name: ghostfolio-db
+    profiles: [finance, ibkr]
     environment:
       POSTGRES_DB: ghostfolio
       POSTGRES_USER: ghostfolio
@@ -547,6 +581,7 @@ services:
   ghostfolio-redis:
     image: redis:8-alpine
     container_name: ghostfolio-redis
+    profiles: [finance, ibkr]
     command: redis-server --requirepass ${GHOSTFOLIO_REDIS_PASSWORD}
     restart: unless-stopped
 
@@ -557,6 +592,7 @@ services:
   ghostfolio-ibkr-sync:
     image: agusalex/ghostfolio-sync@sha256:264372a508bd82b9d1d159dd7f83da8c62dc0c8b60cfc3800d137b910d9a018b
     container_name: ghostfolio-ibkr-sync
+    profiles: [ibkr]
     depends_on:
       - ghostfolio
     env_file:
@@ -566,7 +602,7 @@ services:
       OPERATION: SYNCIBKR
       GHOST_HOST: http://ghostfolio:3333
       GHOST_KEY: ${GHOSTFOLIO_SECURITY_TOKEN}
-      GHOST_CURRENCY: EUR
+      GHOST_CURRENCY: ${GHOSTFOLIO_CURRENCY:-EUR}
       IBKR_ACCOUNT_ID: ${IBKR_ACCOUNT_ID}
       IBKR_TOKEN: ${IBKR_FLEX_TOKEN}
       IBKR_QUERY: ${IBKR_FLEX_QUERY_ID}
@@ -592,6 +628,7 @@ services:
   couchdb:
     image: couchdb:3.5.2.1
     container_name: couchdb
+    profiles: [wiki, wiki-bridge]
     environment:
       COUCHDB_USER: ${COUCHDB_USER}
       COUCHDB_PASSWORD: ${COUCHDB_PASSWORD}
@@ -611,6 +648,7 @@ services:
       context: ./cache/build/livesync-bridge
     image: homelab-livesync-bridge:f27f78c
     container_name: livesync-bridge
+    profiles: [wiki-bridge]
     depends_on:
       - couchdb
     environment:
@@ -634,7 +672,9 @@ services:
       TZ: ${TZ}
       DB: sqlite
       DB_NAME: /data/hc.sqlite
-      SECRET_KEY_FILE: /data/secret-key
+      SECRET_KEY: ${HEALTHCHECKS_SECRET_KEY}
+      # The reconciler skips jobs whose module is not an enabled profile.
+      COMPOSE_PROFILES: ${COMPOSE_PROFILES:-}
       SITE_NAME: ${STACK_NAME} Jobs
       SITE_ROOT: https://jobs.${STACK_HOST}.${PRIVATE_DOMAIN}
       ALLOWED_HOSTS: jobs.${STACK_HOST}.${PRIVATE_DOMAIN},127.0.0.1,localhost,healthchecks
@@ -688,9 +728,12 @@ networks:
     internal: true
 
 volumes:
+  # These are ordinary named volumes so a fresh clone needs no pre-created
+  # state. Under the `homelab` project they resolve to the same
+  # `homelab_<name>` volumes an older external declaration pointed at, so
+  # existing data is adopted rather than orphaned. The trade: `down -v` will
+  # now delete them.
   jellyfin-config:
-    external: true
-    name: homelab_jellyfin-config
   kuma-data:
   karakeep-data:
   karakeep-meili:
@@ -699,5 +742,3 @@ volumes:
   beszel-socket:
   couchdb-data:
   healthchecks-data:
-    external: true
-    name: homelab_healthchecks-data

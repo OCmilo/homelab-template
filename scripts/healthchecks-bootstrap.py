@@ -56,9 +56,10 @@ if created or reset_password:
     user.set_password(password)
 user.save()
 
+timezone = os.environ.get("TZ") or "UTC"
 profile = Profile.objects.for_user(user)
-if profile.tz != "Europe/Madrid":
-    profile.tz = "Europe/Madrid"
+if profile.tz != timezone:
+    profile.tz = timezone
     profile.save(update_fields=["tz"])
 
 project = Project.objects.filter(owner=user, name="Homelab Jobs").first()
