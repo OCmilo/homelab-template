@@ -20,14 +20,34 @@ DEFAULT_OUTPUT = pathlib.Path("/opt/homelab/runtime/ping-urls.env")
 DEFAULT_STATE = pathlib.Path("/opt/homelab/runtime/reconcile-state.json")
 # Jobs tagged `core` belong to no optional module and always run.
 ALWAYS_ON_MODULE = "core"
+ACTIVE = "active"
+# The scheduler reports no per-run completion, so the check exists to document
+# the schedule and can never go green on its own.
+CATALOG_ONLY = "catalog-only"
+# Deliberately silenced in the registry: the job runs and its check records
+# pings, but a missed window raises nothing.
+MUTED = "muted"
+# Its module is switched off, so the job does not run at all.
 DISABLED = "disabled"
+DECLARED_STATES = {ACTIVE, CATALOG_ONLY, MUTED}
 # A long-running agent rather than a timer: it has no per-run completion to
 # report, so it is in the registry for installation only.
 DAEMON = "daemon"
 
 
 def enabled_modules() -> set[str]:
-    profiles = os.environ.get("COMPOSE_PROFILES", "")
+    # Absent and empty mean different things. Compose always sets the variable
+    # for this container, so an absent one means the reconciler is running
+    # somewhere that never read .env — and treating that as "no modules" would
+    # pause every check while the jobs behind them keep running.
+    profiles = os.environ.get("COMPOSE_PROFILES")
+    if profiles is None:
+        raise SystemExit(
+            "COMPOSE_PROFILES is not set. Refusing to run: an absent value would "
+            "read as every module disabled and pause their checks. Recreate the "
+            "container (docker compose up -d --force-recreate healthchecks) so it "
+            "inherits the value from .env."
+        )
     return {ALWAYS_ON_MODULE, *(p.strip() for p in profiles.split(",") if p.strip())}
 
 
@@ -39,6 +59,8 @@ def required_modules(job: dict) -> set[str]:
 
 
 def monitoring_state(job: dict, enabled: set[str]) -> str:
+    # A switched-off module wins over whatever the registry declares: the job
+    # cannot run, so nothing it says about alerting applies.
     return job["monitoring"] if required_modules(job) <= enabled else DISABLED
 
 
@@ -87,8 +109,11 @@ def load_registry(path: pathlib.Path) -> dict:
             raise ValueError(f"{job['id']}: invalid id")
         if job["id"] in ids:
             raise ValueError(f"{job['id']}: duplicate id")
-        if job["monitoring"] not in {"active", "catalog-only"}:
-            raise ValueError(f"{job['id']}: invalid monitoring mode")
+        if job["monitoring"] not in DECLARED_STATES:
+            raise ValueError(
+                f"{job['id']}: invalid monitoring mode; expected one of "
+                f"{sorted(DECLARED_STATES)}"
+            )
         modules = required_modules(job)
         if not modules or not all(isinstance(name, str) and name for name in modules):
             raise ValueError(f"{job['id']}: module must be a name or a list of names")
@@ -185,7 +210,9 @@ def main() -> int:
     # Jobs whose module is switched off are still upserted, then paused. They
     # cannot simply be skipped: this reconciler never deletes, so a check left
     # behind by a module you have since disabled would keep missing its window
-    # and alerting forever.
+    # and alerting forever. The registry is the whole truth about which checks
+    # alert, so a pause applied in the web UI is undone on the next run —
+    # declare `"monitoring": "muted"` to silence a job for good.
     modules = enabled_modules()
     timezone = registry_timezone(registry)
     jobs = [job for job in registry["jobs"] if job["schedule"]["type"] != DAEMON]
@@ -203,7 +230,7 @@ def main() -> int:
         f"HEALTHCHECKS_PING_KEY={ping_key}",
     ]
     state = {"schema_version": 1, "jobs": []}
-    counts = {"active": 0, "catalog-only": 0, DISABLED: 0}
+    counts = dict.fromkeys([*DECLARED_STATES, DISABLED], 0)
 
     for job in jobs:
         monitoring = monitoring_state(job, modules)
@@ -212,7 +239,7 @@ def main() -> int:
             raise ValueError(
                 f"{job['id']}: check slug is {check.get('slug')!r}; ping URL would not resolve"
             )
-        running = monitoring == "active"
+        running = monitoring == ACTIVE
         paused = check.get("status") == "paused"
         if not running and not paused:
             api.post(f"/checks/{check['uuid']}/pause")
@@ -231,8 +258,8 @@ def main() -> int:
     args.state.write_text(json.dumps(state, indent=2) + "\n")
     print(
         f"Reconciled {len(jobs)} checks: "
-        f"{counts['active']} active, {counts['catalog-only']} catalog-only, "
-        f"{counts[DISABLED]} paused (module not enabled)"
+        f"{counts[ACTIVE]} active, {counts[CATALOG_ONLY]} catalog-only, "
+        f"{counts[MUTED]} muted, {counts[DISABLED]} paused (module not enabled)"
     )
     return 0
 

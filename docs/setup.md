@@ -94,6 +94,24 @@ Generate the secrets as you go; each entry says how (`openssl rand -hex 32`,
 `LC_ALL=C tr -dc A-Za-z0-9 </dev/urandom | head -c 32`, and so on). Never
 commit `.env`, and never put real values in `.env.example`.
 
+`HEALTHCHECKS_SECRET_KEY` ships as a placeholder and **must** be replaced before
+the first `up`. It is the Django signing key: sessions and password-reset links
+are signed with it, so anyone who knows the value can mint a cookie that logs
+them in as the administrator — and the placeholder is public in this repo.
+Nothing fails if you leave it, which is exactly why it is easy to miss.
+
+```bash
+printf 'HEALTHCHECKS_SECRET_KEY=%s\n' "$(openssl rand -base64 48)"
+```
+
+Every unfilled placeholder in `.env.example` is written between angle brackets,
+so one grep finds anything you missed. Run it before the first `up` — most of
+these fail loudly when wrong, but the Healthchecks key does not:
+
+```bash
+grep -n '<[^>]*>' .env || echo "no placeholders left"
+```
+
 The NordVPN WireGuard private key is not shown in their dashboard; derive it
 from an access token with `scripts/set-nordvpn-key.sh`, which reads the token
 without echoing it and writes the derived key into `.env`.

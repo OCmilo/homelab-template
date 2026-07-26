@@ -30,6 +30,10 @@ unloads the rest. The reconciler still upserts every job, but pauses the checks
 of disabled ones — it never deletes, so skipping them outright would leave the
 old checks alerting forever.
 
+`monitoring` is one of `active`, `catalog-only`, or `muted`. Setting `muted` is
+how you stop a job alerting while leaving it running: this file decides what
+alerts, so pausing a check in the web UI is undone by the next reconcile.
+
 Agents that are not timers carry `"schedule": {"type": "daemon"}`. They are
 listed so module filtering can install and remove them, and they get no check:
 a KeepAlive process has no per-run completion to report.

@@ -32,7 +32,9 @@ short text body.
 
 A `catalog-only` check is deliberately paused. It makes an application-owned
 schedule visible without pretending Healthchecks can see runs that the
-application does not report. Diun and Recyclarr start in this state.
+application does not report. Diun and Recyclarr start in this state. A `muted`
+check is also paused, for the different reason that you chose to stop it
+alerting; see "What alerts, and who decides" below.
 
 Healthchecks cannot discover arbitrary internal application timers
 passively. A schedule gains real execution history only after the owning
@@ -51,7 +53,7 @@ timer currently in use. Each entry has:
 - cron expression or interval, interpreted in `TZ` from `.env`;
 - expected duration and missed-run grace;
 - risk classification;
-- active or catalog-only monitoring state.
+- monitoring state: `active`, `catalog-only`, or `muted`.
 
 There is no per-job ping variable: the job's stable ID doubles as its
 Healthchecks check slug, and the reconciler writes a single shared
@@ -72,11 +74,38 @@ docker compose exec healthchecks \
   python /opt/homelab/scripts/healthchecks-reconcile.py
 ```
 
-The reconciler uses Management API v3, upserts by stable slug, pauses
-catalog-only jobs, and writes `config/healthchecks/ping-urls.env`. It will not
-delete unmanaged checks. Jobs whose module is not in `COMPOSE_PROFILES` are
-skipped rather than registered — a check for a module you do not run would sit
-red forever.
+The reconciler uses Management API v3, upserts by stable slug, and writes
+`config/healthchecks/ping-urls.env`. It will not delete unmanaged checks.
+
+## What alerts, and who decides
+
+Healthchecks reads silence as failure: a check that receives no ping inside its
+schedule plus grace goes red and notifies. That is what catches a job that
+quietly stopped running, and it is also why anything legitimately silent has to
+be paused instead of deleted — the reconciler never deletes, so a check nobody
+pauses alerts forever.
+
+`jobs/jobs.json` is the whole truth about which checks alert. Each job declares
+one of:
+
+- `active` — pings are expected, a missed window alerts;
+- `catalog-only` — the owning scheduler reports no per-run completion, so the
+  check documents the schedule and can never go green on its own;
+- `muted` — deliberately silenced. The job still runs and its check still
+  records pings, but a missed window raises nothing.
+
+A job whose module is not in `COMPOSE_PROFILES` overrides all three: it cannot
+run at all, so its check is paused regardless of what it declares. Enabling the
+module again restores whatever the registry says.
+
+Because the registry is authoritative, **a pause applied in the web UI is undone
+by the next reconcile** — the reconciler cannot tell it apart from one of its
+own. To silence a job for good, set `"monitoring": "muted"` and reconcile.
+
+`COMPOSE_PROFILES` must be present in the reconciler's environment. Compose
+always sets it for this container, so an absent value means the process never
+read `.env`; the reconciler refuses rather than pause every check while the
+jobs behind them keep running.
 
 ## Runtime and access
 
