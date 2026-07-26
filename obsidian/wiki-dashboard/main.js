@@ -659,9 +659,8 @@ var askMethods = {
   },
   async runAsk(question, targetThread) {
     const config = await this.askConfig();
-    const endpoints = config.endpoints ?? DEFAULT_ASK_ENDPOINTS;
     const thread = targetThread.filter((turn) => !turn.failed).map((turn) => ({ question: turn.question, answer: turn.answer }));
-    const post = await this.askRequest(endpoints, "/ask", {
+    const post = await this.askRequest(config, "/ask", {
       question,
       thread
     });
@@ -669,7 +668,7 @@ var askMethods = {
     let consecutiveFailures = 0;
     while (Date.now() < deadline && !this.disposed) {
       await new Promise((resolve) => window.setTimeout(resolve, 2e3));
-      const job = await this.askRequest(endpoints, `/ask/${post.id}`).catch(() => null);
+      const job = await this.askRequest(config, `/ask/${post.id}`).catch(() => null);
       consecutiveFailures = job ? 0 : consecutiveFailures + 1;
       if (consecutiveFailures >= 8) throw new Error("lost contact with the server");
       if (job?.status === "done") return job.answer;
@@ -677,7 +676,9 @@ var askMethods = {
     }
     throw new Error(this.disposed ? "view closed" : "timed out after 10 minutes");
   },
-  async askRequest(endpoints, route, payload) {
+  async askRequest(config, route, payload) {
+    const endpoints = config?.endpoints ?? DEFAULT_ASK_ENDPOINTS;
+    const token = config?.token ?? "";
     let lastError = new Error("no ask endpoints reachable");
     for (const base of endpoints) {
       try {
@@ -685,6 +686,7 @@ var askMethods = {
           url: `${base}${route}`,
           method: payload ? "POST" : "GET",
           contentType: "application/json",
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
           body: payload ? JSON.stringify(payload) : void 0,
           throw: false
         });
@@ -766,7 +768,7 @@ var askMethods = {
       const config = await this.askConfig();
       this.opsConfig = config;
       const summary = await this.askRequest(
-        config.endpoints ?? DEFAULT_ASK_ENDPOINTS,
+        config,
         forceCosts ? "/ops?refresh=1" : "/ops"
       );
       this.renderOps(summary);
@@ -909,7 +911,7 @@ var askMethods = {
       add.setText("Adding\u2026");
       try {
         const updated = await this.askRequest(
-          this.opsConfig.endpoints ?? DEFAULT_ASK_ENDPOINTS,
+          this.opsConfig,
           "/ops/credit/add",
           { amountUsd: Number(amount.value) }
         );
@@ -925,7 +927,7 @@ var askMethods = {
       save.setText("Saving\u2026");
       try {
         const updated = await this.askRequest(
-          this.opsConfig.endpoints ?? DEFAULT_ASK_ENDPOINTS,
+          this.opsConfig,
           "/ops/credit",
           { balanceUsd: Number(balance.value) }
         );
@@ -962,7 +964,7 @@ var askMethods = {
     button.setText("Starting\u2026");
     try {
       const config = await this.askConfig();
-      await this.askRequest(config.endpoints ?? DEFAULT_ASK_ENDPOINTS, "/ops/retry", { kind });
+      await this.askRequest(config, "/ops/retry", { kind });
       button.setText("Retry started");
     } catch {
       button.disabled = false;

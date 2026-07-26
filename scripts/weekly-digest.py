@@ -1,94 +1,117 @@
 #!/usr/bin/env python3
 """Weekly finance digest: month-to-date budget envelope status to Telegram.
 
+Firefly reports money per currency and never converts between them, so every
+total here stays split by currency code rather than being added up and labelled
+with a guess.
+
 Runs Mondays 09:00 via ~/Library/LaunchAgents/com.homelab.weekly-digest.plist
 """
+
+from __future__ import annotations
+
+import collections
 import datetime
-import json
-import pathlib
-import re
-import subprocess
-import sys
-import urllib.parse
-import urllib.request
 
-HOMELAB = pathlib.Path.home() / "homelab"
-BASE = "http://localhost:8086/api/v1"
+from firefly_lib import Firefly, healthchecks_push, telegram_send
 
-env = (HOMELAB / ".env").read_text()
+JOB_ID = "weekly-finance-digest"
+OVER_BUDGET = "\U0001F534"
+AHEAD_OF_PACE = "⚠️"
+ON_TRACK = "✅"
+PACE_TOLERANCE = 20
+BUDGET_LIMIT = 100
 
-def kuma_push(status, message):
-    subprocess.run(
-        [str(HOMELAB / "scripts/kuma-push.sh"), "KUMA_PUSH_WEEKLY_DIGEST", status, message],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=False,
-    )
 
-def report_unhandled(exc_type, exc, tb):
-    kuma_push("down", "weekly digest failed")
-    sys.__excepthook__(exc_type, exc, tb)
+def rendered(totals: dict[str, float]) -> str:
+    return " + ".join(f"{value:.0f} {code}" for code, value in sorted(totals.items())) or "0"
 
-sys.excepthook = report_unhandled
-kuma_push("start", "weekly digest started")
 
-def env_var(name, default=""):
-    m = re.search(r"^{}=(.+)$".format(name), env, re.M)
-    return m.group(1).strip() if m else default
+def flag_for(pct: float, pace: float) -> str:
+    over = OVER_BUDGET * (pct > 100)
+    ahead = AHEAD_OF_PACE * (100 >= pct > pace + PACE_TOLERANCE)
+    return over or ahead or ON_TRACK
 
-TOKEN = env_var("FIREFLY_ACCESS_TOKEN")
-HEADERS = {"Authorization": "Bearer {}".format(TOKEN), "Accept": "application/json"}
 
-def get(path):
-    req = urllib.request.Request(BASE + path, headers=HEADERS)
-    return json.load(urllib.request.urlopen(req, timeout=120))
+def budget_status(firefly: Firefly, start, today, pace: float):
+    """Per-envelope rows plus month-to-date totals, both keyed by currency."""
+    rows = []
+    budgeted: dict[str, float] = collections.defaultdict(float)
+    spent: dict[str, float] = collections.defaultdict(float)
+    params = {"limit": BUDGET_LIMIT, "start": start, "end": today}
+    for budget in firefly.call("GET", "/budgets", params=params)["data"]:
+        attrs = budget["attributes"]
+        amount = float(attrs.get("auto_budget_amount") or 0)
+        if not amount:
+            continue
+        code = attrs["currency_code"]
+        # `spent` carries one entry per currency the envelope was spent in.
+        # Only the envelope's own currency is comparable to its amount; the
+        # rest is surfaced on the row instead of being folded into the total.
+        by_currency = collections.defaultdict(float)
+        for entry in attrs.get("spent", []):
+            by_currency[entry["currency_code"]] -= float(entry["sum"])
+        native = by_currency.pop(code, 0.0)
+        pct = 100 * native / amount
+        other = f" (+{rendered(dict(by_currency))} elsewhere)" * bool(by_currency)
+        rows.append((pct, f"{flag_for(pct, pace)} {attrs['name']}: "
+                          f"{native:.0f}/{amount:.0f} {code} ({pct:.0f}%){other}"))
+        budgeted[code] += amount
+        spent[code] += native
+        for extra_code, extra in by_currency.items():
+            spent[extra_code] += extra
+    rows.sort(reverse=True)
+    return [row for _, row in rows], dict(budgeted), dict(spent)
 
-today = datetime.date.today()
-start = today.replace(day=1)
-next_month = (start + datetime.timedelta(days=32)).replace(day=1)
-days_in_month = (next_month - start).days
-pace = 100 * today.day / days_in_month
 
-rows = []
-total_budget = total_spent = 0.0
-for b in get("/budgets?limit=100&start={}&end={}".format(start, today))["data"]:
-    a = b["attributes"]
-    amount = float(a.get("auto_budget_amount") or 0)
-    if not amount:
-        continue
-    spent = -sum(float(s["sum"]) for s in a.get("spent", []))
-    total_budget += amount
-    total_spent += spent
-    pct = 100 * spent / amount
-    flag = "\U0001F534" if pct > 100 else ("⚠️" if pct > pace + 20 else "✅")
-    rows.append((pct, "{} {}: {:.0f}/{:.0f} ({:.0f}%)".format(flag, a["name"], spent, amount, pct)))
+def month_totals(firefly: Firefly, start, today):
+    summary = firefly.call("GET", "/summary/basic", params={"start": start, "end": today})
+    earned: dict[str, float] = collections.defaultdict(float)
+    spent: dict[str, float] = collections.defaultdict(float)
+    buckets = {"earned-in-": earned, "spent-in-": spent}
+    for key, value in summary.items():
+        prefix = next((candidate for candidate in buckets if key.startswith(candidate)), None)
+        if prefix is None:
+            continue
+        buckets[prefix][value["currency_code"]] += float(value["monetary_value"])
+    return dict(earned), dict(spent)
 
-rows.sort(reverse=True)
 
-q = urllib.parse.quote('has_no_category:true type:withdrawal date_after:{} date_before:{}'.format(start, today))
-uncat = get("/search/transactions?query={}&limit=1".format(q))["meta"]["pagination"]["total"]
+def uncategorized(firefly: Firefly, start, today) -> int:
+    query = f"has_no_category:true type:withdrawal date_after:{start} date_before:{today}"
+    found = firefly.call("GET", "/search/transactions", params={"query": query, "limit": 1})
+    return found["meta"]["pagination"]["total"]
 
-summary = get("/summary/basic?start={}&end={}".format(start, today))
-earned = spent_all = 0.0
-for key, val in summary.items():
-    if key.startswith("earned-in-"):
-        earned += float(val["monetary_value"])
-    if key.startswith("spent-in-"):
-        spent_all += float(val["monetary_value"])
 
-lines = ["\U0001F4CA Finance digest — {} (day {}/{}, {:.0f}% through the month)".format(
-    today.strftime("%b %d"), today.day, days_in_month, pace), ""]
-lines += [r[1] for r in rows]
-lines += ["",
-          "Budgeted spend: {:.0f}/{:.0f} EUR".format(total_spent, total_budget),
-          "All spending: {:.0f} EUR | Income: {:.0f} EUR".format(-spent_all, earned),
-          "Uncategorized this month: {} transactions".format(uncat)]
-text = "\n".join(lines)
+def main() -> None:
+    healthchecks_push(JOB_ID, "start", "weekly digest started")
+    firefly = Firefly()
+    today = datetime.date.today()
+    start = today.replace(day=1)
+    days_in_month = ((start + datetime.timedelta(days=32)).replace(day=1) - start).days
+    pace = 100 * today.day / days_in_month
 
-tg_token = env_var("TELEGRAM_BOT_TOKEN")
-tg_chat = env_var("TELEGRAM_CHAT_ID")
-thread = env_var("TELEGRAM_TOPIC_FINANCE", "208")
-data = urllib.parse.urlencode({"chat_id": tg_chat, "message_thread_id": thread, "text": text}).encode()
-urllib.request.urlopen("https://api.telegram.org/bot{}/sendMessage".format(tg_token), data=data, timeout=10)
-kuma_push("up", "weekly digest sent")
-print("digest sent")
+    try:
+        rows, budgeted, spent = budget_status(firefly, start, today, pace)
+        earned_all, spent_all = month_totals(firefly, start, today)
+        uncat = uncategorized(firefly, start, today)
+    except (OSError, RuntimeError, KeyError, ValueError) as exc:
+        healthchecks_push(JOB_ID, "fail", f"weekly digest failed: {exc}")
+        telegram_send(f"\U0001F6A8 Weekly finance digest failed: {exc}")
+        raise
+
+    header = (f"\U0001F4CA Finance digest — {today.strftime('%b %d')} "
+              f"(day {today.day}/{days_in_month}, {pace:.0f}% through the month)")
+    lines = [header, ""] + rows + [
+        "",
+        f"Budgeted spend: {rendered(spent)} of {rendered(budgeted)}",
+        f"All spending: {rendered({code: -value for code, value in spent_all.items()})}"
+        f" | Income: {rendered(earned_all)}",
+        f"Uncategorized this month: {uncat} transactions",
+    ]
+    telegram_send("\n".join(lines))
+    healthchecks_push(JOB_ID, "success", "weekly digest sent")
+    print("digest sent")
+
+
+main()

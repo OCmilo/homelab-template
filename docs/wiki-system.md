@@ -327,9 +327,16 @@ agent run lock, since a read-only run cannot conflict with a writing one. Error
 messages are scrubbed of API keys and bearer tokens before they reach the ledger
 or the plugin.
 
-The Ask server itself binds `0.0.0.0:8799` with permissive CORS and **no
-authentication** — it is designed for a trusted network only. The same applies
-to CouchDB. Keep both off the public internet.
+The Ask server requires `Authorization: Bearer $WIKI_ASK_TOKEN` on every route
+except `/health`; the plugin sends it from the `token` field in
+`system/schema/ask.json`. Without that gate anyone who could reach the port
+could spend OpenAI credits, rewrite the credit ledger, and start agent runs.
+It binds loopback unless `WIKI_ASK_HOST` widens it, and refuses to start on a
+routable address with no token configured. CORS stays permissive but never
+allows an `Authorization` header, so browser JavaScript on another origin
+cannot authenticate; the plugin reaches the server through Obsidian's
+`requestUrl`, which is not CORS-bound. CouchDB has no equivalent gate — keep
+both off the public internet.
 
 ## Intake
 
@@ -518,9 +525,11 @@ long-lived daemon, not a scheduled job, so it has no registry entry.
    start empty and grow bottom-up under adversarial justification), and
    `system/schema/conventions.md`. Write `system/schema/map.json` describing your
    folder roles and `system/schema/ask.json` with
-   `{"endpoints": ["http://<host>:8799"], "researchGaps": {"folder":
-   "inbox/research-gaps", "type": "research-gap"}}`. Initialize the external git
-   dir:
+   `{"endpoints": ["http://<host>:8799"], "token": "<WIKI_ASK_TOKEN>",
+   "researchGaps": {"folder": "inbox/research-gaps", "type": "research-gap"}}`.
+   The token must match `WIKI_ASK_TOKEN` in `.env`; it syncs to every device
+   through the vault, so treat the vault as holding a credential. Initialize
+   the external git dir:
    `git --git-dir=config/wiki-vault.git --work-tree=config/wiki-vault init`,
    then commit the scaffold.
 

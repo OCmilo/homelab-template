@@ -110,27 +110,39 @@ def rule_payload(rule):
 
 
 def push(firefly, path, entry, payload):
+    """Create or update one entry; returns the id Firefly assigned on create."""
     entry_id = entry.get("id")
     if not entry_id:
         created = firefly.call("POST", path, payload)
         print(f"created {path} {payload['title']!r} -> id {created['data']['id']}")
-        return
+        return created["data"]["id"]
     firefly.call("PUT", f"{path}/{entry_id}", payload)
     print(f"updated {path}/{entry_id} {payload['title']!r}")
+    return entry_id
 
 
 def apply(firefly):
     recorded, live = recorded_state(), live_state(firefly)
     live_groups = {entry["id"]: entry for entry in live["rule_groups"]}
     live_rules = {entry["id"]: entry for entry in live["rules"]}
+    # A group created in this run gets a fresh id, but the rules in the file
+    # still carry whatever the author wrote. Resolve group -> title -> real id
+    # so those rules land in the group they name instead of a stale one.
+    group_ids = {}
+    title_by_recorded_id = {}
     for group in recorded["rule_groups"]:
         match = live_groups.get(group.get("id"))
-        if match is None or drifted_fields(group, match):
-            push(firefly, "/rule-groups", group, {field: group[field] for field in GROUP_FIELDS})
+        title_by_recorded_id[group.get("id")] = group["title"]
+        stale = match is None or drifted_fields(group, match)
+        pushed = stale and push(firefly, "/rule-groups", group, {field: group[field] for field in GROUP_FIELDS})
+        group_ids[group["title"]] = pushed or group.get("id")
     for rule in recorded["rules"]:
         match = live_rules.get(rule.get("id"))
         if match is None or drifted_fields(rule, match):
-            push(firefly, "/rules", rule, rule_payload(rule))
+            payload = rule_payload(rule)
+            title = title_by_recorded_id.get(rule["rule_group_id"])
+            payload["rule_group_id"] = group_ids.get(title, rule["rule_group_id"])
+            push(firefly, "/rules", rule, payload)
     write_file(live_state(firefly))
 
 

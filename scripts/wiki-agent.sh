@@ -178,6 +178,17 @@ if [ ! -f "${CODEX_HOME}/auth.json" ]; then
   printf "%s" "${OPENAI_API_KEY}" | codex login --with-api-key
 fi
 
+# The prompt is assembled with `cat` inside `set +e` below, so a missing file
+# would silently hand the model a truncated prompt — losing the untrusted-content
+# defenses while still reporting a successful run.
+for required in "${POLICY}" "${SKILLS_DIR}/${SKILL}.md"; do
+  [ -s "${required}" ] || {
+    echo "wiki-agent: missing or empty prompt file: ${required}" >&2
+    fail
+    exit 1
+  }
+done
+
 CODEX_JSON="$(mktemp "${STATE_DIR}/codex-${SKILL}.XXXXXX.jsonl")"
 CODEX_ERROR="$(mktemp "${STATE_DIR}/codex-${SKILL}.XXXXXX.error")"
 RUN_ID="$(python3 -c 'import uuid; print(uuid.uuid4().hex)')"

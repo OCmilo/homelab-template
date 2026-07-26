@@ -49,7 +49,13 @@ def is_merchant(split: dict) -> bool:
 
 def splits_of(groups) -> list[dict]:
     return [
-        dict(split, transaction_id=group["id"])
+        dict(
+            split,
+            transaction_id=group["id"],
+            group_journal_ids=[
+                sibling["transaction_journal_id"] for sibling in group["attributes"]["transactions"]
+            ],
+        )
         for group in groups
         for split in group["attributes"]["transactions"]
         if split["type"] != TRANSFER
@@ -92,20 +98,17 @@ def guess(knowledge, split: dict) -> str | None:
 
 def apply_category(firefly: Firefly, split: dict, category: str) -> None:
     tags = sorted(set(split.get("tags") or []) | {TAG})
+    # Firefly replaces the whole split set on update, so every sibling journal
+    # has to be listed or a split transaction loses its other legs. A split
+    # named by journal id alone is left exactly as it is.
+    updates = [{"transaction_journal_id": journal} for journal in split["group_journal_ids"]]
+    for entry in updates:
+        targeted = entry["transaction_journal_id"] == split["transaction_journal_id"]
+        targeted and entry.update({"category_name": category, "tags": tags})
     firefly.call(
         "PUT",
         f"/transactions/{split['transaction_id']}",
-        {
-            "apply_rules": False,
-            "fire_webhooks": False,
-            "transactions": [
-                {
-                    "transaction_journal_id": split["transaction_journal_id"],
-                    "category_name": category,
-                    "tags": tags,
-                }
-            ],
-        },
+        {"apply_rules": False, "fire_webhooks": False, "transactions": updates},
     )
 
 

@@ -1,23 +1,25 @@
 #!/usr/bin/env python3
-"""Sync Revolut cash balances from Firefly III into Ghostfolio accounts.
+"""Sync bank cash balances from Firefly III into Ghostfolio accounts.
+
+Each account keeps the currency Firefly holds it in — Ghostfolio converts for
+its own reporting, so mislabelling the currency here would silently misprice
+the whole cash position.
 
 Runs daily 07:00 via ~/Library/LaunchAgents/com.homelab.ghostfolio-cash-sync.plist
 Creates the Ghostfolio accounts on first run; updates balances after.
 Silent on success; Telegram alert to the Finance topic on failure.
 """
 import json
-import pathlib
-import re
 import subprocess
 import sys
-import urllib.parse
 import urllib.request
 
-HOMELAB = pathlib.Path.home() / "homelab"
+import firefly_lib
+from firefly_lib import ENV, telegram_send
+
+HOMELAB = firefly_lib.HOMELAB
 FIREFLY = "http://localhost:8086/api/v1"
 GHOSTFOLIO = "http://localhost:3333/api/v1"
-
-env = (HOMELAB / ".env").read_text()
 
 def kuma_push(status, message):
     subprocess.run(
@@ -27,13 +29,9 @@ def kuma_push(status, message):
         check=False,
     )
 
-def env_var(name, default=""):
-    m = re.search(r"^{}=(.+)$".format(name), env, re.M)
-    return m.group(1).strip() if m else default
-
 # Firefly account id -> Ghostfolio account name, as JSON in .env:
 # GHOSTFOLIO_ACCOUNT_MAP={"12": "Checking", "13": "Savings"}
-ACCOUNTS = json.loads(env_var("GHOSTFOLIO_ACCOUNT_MAP", "{}"))
+ACCOUNTS = json.loads(ENV.get("GHOSTFOLIO_ACCOUNT_MAP", "{}"))
 
 def call(url, headers, payload=None, method=None):
     data = json.dumps(payload).encode() if payload is not None else None
@@ -41,22 +39,13 @@ def call(url, headers, payload=None, method=None):
     with urllib.request.urlopen(req, timeout=60) as r:
         return json.load(r)
 
-def telegram_alert(text):
-    token = env_var("TELEGRAM_BOT_TOKEN")
-    chat = env_var("TELEGRAM_CHAT_ID")
-    thread = env_var("TELEGRAM_TOPIC_FINANCE", "208")
-    data = urllib.parse.urlencode(
-        {"chat_id": chat, "message_thread_id": thread, "text": text}).encode()
-    urllib.request.urlopen(
-        "https://api.telegram.org/bot{}/sendMessage".format(token), data=data, timeout=10)
-
 def main():
-    ff_headers = {"Authorization": "Bearer {}".format(env_var("FIREFLY_ACCESS_TOKEN")),
+    ff_headers = {"Authorization": "Bearer {}".format(ENV["FIREFLY_ACCESS_TOKEN"]),
                   "Accept": "application/json"}
     balances = {}
     for ff_id, name in ACCOUNTS.items():
-        acct = call("{}/accounts/{}".format(FIREFLY, ff_id), ff_headers)
-        balances[name] = float(acct["data"]["attributes"]["current_balance"])
+        attrs = call("{}/accounts/{}".format(FIREFLY, ff_id), ff_headers)["data"]["attributes"]
+        balances[name] = (float(attrs["current_balance"]), attrs["currency_code"])
 
     security_token = (HOMELAB / "config/ghostfolio/SECURITY_TOKEN").read_text().strip()
     auth = call("{}/auth/anonymous".format(GHOSTFOLIO),
@@ -66,18 +55,18 @@ def main():
                   "Content-Type": "application/json"}
 
     existing = {a["name"]: a for a in call("{}/account".format(GHOSTFOLIO), gf_headers)["accounts"]}
-    for name, balance in balances.items():
+    for name, (balance, currency) in balances.items():
         found = existing.get(name)
         if found:
             call("{}/account/{}".format(GHOSTFOLIO, found["id"]), gf_headers,
-                 {"id": found["id"], "name": name, "currency": "EUR",
+                 {"id": found["id"], "name": name, "currency": currency,
                   "balance": balance, "platformId": None}, method="PUT")
-            print("updated {}: {:.2f} EUR".format(name, balance))
+            print("updated {}: {:.2f} {}".format(name, balance, currency))
             continue
         call("{}/account".format(GHOSTFOLIO), gf_headers,
-             {"name": name, "currency": "EUR", "balance": balance, "platformId": None},
+             {"name": name, "currency": currency, "balance": balance, "platformId": None},
              method="POST")
-        print("created {}: {:.2f} EUR".format(name, balance))
+        print("created {}: {:.2f} {}".format(name, balance, currency))
 
 try:
     kuma_push("start", "cash sync started")
@@ -85,5 +74,5 @@ try:
     kuma_push("up", "cash sync ok")
 except Exception as exc:
     kuma_push("down", "cash sync failed")
-    telegram_alert("⚠️ Ghostfolio cash sync failed: {}".format(exc))
+    telegram_send("⚠️ Ghostfolio cash sync failed: {}".format(exc))
     sys.exit(1)

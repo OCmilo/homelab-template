@@ -8,7 +8,13 @@ GET  /health -> {"ok": true}
 Read-only by construction: codex runs with --sandbox read-only, so a prompt
 injection or model mistake cannot touch the vault. Bypasses the wiki-agent
 run lock on purpose — answering writes nothing, so it never conflicts.
+
+Every route except /health requires `Authorization: Bearer $WIKI_ASK_TOKEN`.
+Without it, anyone who can reach the port could spend OpenAI credits, rewrite
+the credit ledger, and trigger agent runs. WIKI_ASK_HOST controls the bind
+address and defaults to loopback; widen it only alongside a real token.
 """
+import hmac
 import json
 import os
 import subprocess
@@ -28,8 +34,10 @@ SKILL = HOMELAB / "config" / "wiki-agent" / "skills" / "answer-question.md"
 POLICY = HOMELAB / "config" / "wiki-agent" / "skills" / "untrusted-content-policy.md"
 CODEX_HOME = HOMELAB / "config" / "wiki-agent" / "codex-home"
 PORT = 8799
+DEFAULT_HOST = "127.0.0.1"
 MAX_THREAD_TURNS = 4
 JOB_TTL_SECONDS = 3600
+PUBLIC_ROUTES = ("/health",)
 
 jobs = {}
 jobs_lock = threading.Lock()
@@ -45,6 +53,8 @@ ENV_FILE = load_env()
 MODEL = ENV_FILE.get("WIKI_MODEL_SYNTH", "gpt-5.4-mini")
 API_KEY = ENV_FILE.get("WIKI_OPENAI_API_KEY") or ENV_FILE.get("KARAKEEP_OPENAI_API_KEY", "")
 USAGE = WikiUsage(ENV_FILE)
+HOST = ENV_FILE.get("WIKI_ASK_HOST", DEFAULT_HOST)
+TOKEN = ENV_FILE.get("WIKI_ASK_TOKEN", "")
 
 
 def ops_summary(force_cost=False):
@@ -176,10 +186,25 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def authorized(self):
+        """True when the caller may use anything beyond /health.
+
+        Note that Authorization is deliberately absent from the CORS allow-list
+        above, so browser JavaScript on another origin cannot authenticate at
+        all. The plugin uses Obsidian's requestUrl, which is not CORS-bound.
+        """
+        route = urlparse(self.path).path
+        offered = self.headers.get("Authorization", "").removeprefix("Bearer ").strip()
+        allowed = route in PUBLIC_ROUTES or hmac.compare_digest(offered, TOKEN)
+        allowed or self.reply(401, {"error": "unauthorized", "code": "unauthorized"})
+        return allowed
+
     def do_OPTIONS(self):
         self.reply(204, {})
 
     def do_GET(self):
+        if not self.authorized():
+            return
         parsed = urlparse(self.path)
         if parsed.path == "/health":
             return self.reply(200, {"ok": True, "model": MODEL})
@@ -193,6 +218,8 @@ class Handler(BaseHTTPRequestHandler):
         job and self.reply(200, {key: value for key, value in job.items() if key != "created"})
 
     def do_POST(self):
+        if not self.authorized():
+            return
         if self.path == "/ops/credit/add":
             length = int(self.headers.get("Content-Length", 0))
             try:
@@ -276,7 +303,15 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
+    # Refusing to start beats starting wide open: a token-less server on a
+    # routable address is reachable by every device on the LAN and tailnet.
+    if not TOKEN and HOST != DEFAULT_HOST:
+        raise SystemExit(
+            f"refusing to bind {HOST}:{PORT} without WIKI_ASK_TOKEN — "
+            "set a token in .env (openssl rand -hex 32) or leave WIKI_ASK_HOST unset"
+        )
+    print(f"wiki ask server on {HOST}:{PORT} (auth: {'token' if TOKEN else 'loopback only'})", flush=True)
+    ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()
 
 
 if __name__ == "__main__":

@@ -71,14 +71,24 @@ cd "${HOMELAB}"
 
 restart_services() {
   docker compose start "${SQLITE_SERVICES[@]}" >> "${LOG}" 2>&1 || {
-    echo "$(date '+%Y-%m-%d %H:%M:%S') WARNING: service restart after backup failed" >> "${LOG}"
+    degrade "service restart failed — containers may still be stopped"
     telegram_alert "service restart failed — containers may still be stopped"
   }
 }
 trap restart_services EXIT
 # untrapped TERM/INT would skip the EXIT trap and leave services stopped;
-# the in-flight run_timed child would survive as an orphan, so kill it too
-trap 'kill -9 "${CURRENT_CMD_PID:-0}" "${CURRENT_WATCHDOG_PID:-0}" 2>/dev/null; fail "terminated by signal"' TERM INT
+# the in-flight run_timed child would survive as an orphan, so kill it too.
+# The pids expand to nothing when no child is running — `kill -9 0` would
+# signal this script's own process group and fail() would never run.
+trap 'kill -9 ${CURRENT_CMD_PID:-} ${CURRENT_WATCHDOG_PID:-} 2>/dev/null || true; fail "terminated by signal"' TERM INT
+
+# Steps that are allowed to fail without aborting the backup still have to be
+# visible: a run that lost a snapshot must not report a plain success.
+DEGRADED=()
+degrade() {
+  echo "$(date '+%Y-%m-%d %H:%M:%S') WARNING: $1" >> "${LOG}"
+  DEGRADED+=("$1")
+}
 
 telegram_send() {
   TG_TOKEN="$(env_value TELEGRAM_BOT_TOKEN)"
@@ -149,32 +159,32 @@ rm -rf "${SNAP_DIR}"
 mkdir -p "${SNAP_DIR}"
 run_timed 300 docker run --rm -v homelab_kuma-data:/data -v "${SNAP_DIR}:/snap" alpine sh -c \
     'apk add -q sqlite && sqlite3 /data/kuma.db ".backup /snap/kuma-volume_kuma.db"' ||
-  echo "$(date '+%Y-%m-%d %H:%M:%S') kuma volume snapshot FAILED" >> "${LOG}"
+  degrade "kuma volume snapshot failed"
 
 run_timed 600 docker run --rm -v homelab_karakeep-data:/data -v "${SNAP_DIR}:/snap" alpine sh -c \
     'apk add -q sqlite && sqlite3 /data/db.db ".backup /snap/karakeep-volume_db.db" && { [ ! -d /data/assets ] || tar czf /snap/karakeep-volume_assets.tgz -C /data assets; }' ||
-  echo "$(date '+%Y-%m-%d %H:%M:%S') karakeep volume snapshot FAILED" >> "${LOG}"
+  degrade "karakeep volume snapshot failed"
 
 run_timed 900 docker compose exec -T paperless document_exporter ../export --delete --no-progress-bar ||
-  echo "$(date '+%Y-%m-%d %H:%M:%S') WARNING: paperless export failed (raw data dir still backed up)" >> "${LOG}"
+  degrade "paperless export failed (raw data dir still backed up)"
 
 run_timed 300 docker compose exec -T ghostfolio-db sh -c \
     'pg_dump -U ghostfolio -Fc ghostfolio > /dumps/ghostfolio.dump' ||
-  echo "$(date '+%Y-%m-%d %H:%M:%S') WARNING: ghostfolio pg_dump failed (raw data dir still backed up)" >> "${LOG}"
+  degrade "ghostfolio pg_dump failed (raw data dir still backed up)"
 
 run_timed 300 docker compose stop "${SQLITE_SERVICES[@]}" || fail "stopping services"
 
 run_timed 600 docker run --rm -v homelab_jellyfin-config:/data -v "${SNAP_DIR}:/snap" alpine sh -c \
     'tar czf /snap/jellyfin-volume_config.tgz -C /data .' ||
-  echo "$(date '+%Y-%m-%d %H:%M:%S') WARNING: jellyfin volume snapshot failed (raw named volume still exists)" >> "${LOG}"
+  degrade "jellyfin volume snapshot failed (raw named volume still exists)"
 
 run_timed 300 docker run --rm -v homelab_beszel-data:/data -v "${SNAP_DIR}:/snap" alpine sh -c \
     'tar czf /snap/beszel-volume_data.tgz -C /data .' ||
-  echo "$(date '+%Y-%m-%d %H:%M:%S') WARNING: beszel volume snapshot failed (raw named volume still exists)" >> "${LOG}"
+  degrade "beszel volume snapshot failed (raw named volume still exists)"
 
 run_timed 300 docker run --rm -v homelab_healthchecks-data:/data -v "${SNAP_DIR}:/snap" alpine sh -c \
     'tar czf /snap/healthchecks-volume_data.tgz -C /data .' ||
-  echo "$(date '+%Y-%m-%d %H:%M:%S') WARNING: Healthchecks volume snapshot failed (raw named volume still exists)" >> "${LOG}"
+  degrade "healthchecks volume snapshot failed (raw named volume still exists)"
 
 run_timed 1800 restic backup \
   --exclude "${HOMELAB}/cache" \
@@ -194,10 +204,23 @@ run_timed 900 restic check || fail "integrity check"
 mirror_to_b2
 
 SNAPSHOT_COUNT="$(restic snapshots --json | /usr/bin/python3 -c 'import json,sys; print(len(json.load(sys.stdin)), "snapshots")')"
-echo "$(date '+%Y-%m-%d %H:%M:%S') restic backup ok: ${SNAPSHOT_COUNT}" >> "${LOG}"
-"${HOMELAB}/scripts/kuma-push.sh" KUMA_PUSH_BACKUP up "backup ok: ${SNAPSHOT_COUNT}"
-if [ "${B2_CONFIGURED}" = true ]; then
-  telegram_send "✅ ${STACK_NAME} backup succeeded: ${SNAPSHOT_COUNT}; Backblaze B2 mirror ok" true
-else
-  telegram_send "✅ ${STACK_NAME} backup succeeded: ${SNAPSHOT_COUNT}" true
-fi
+
+B2_NOTE=""
+[ "${B2_CONFIGURED}" != true ] || B2_NOTE="; Backblaze B2 mirror ok"
+
+# A degraded run is reported as a warning, out loud (not silenced), because the
+# missing pieces are exactly the ones a restore would need.
+WARNINGS=""
+ICON="✅"
+STATUS="succeeded"
+SILENT=true
+[ "${#DEGRADED[@]}" -eq 0 ] || {
+  WARNINGS="$(printf '\n⚠️ %s' "${DEGRADED[@]}")"
+  ICON="⚠️"
+  STATUS="completed with warnings"
+  SILENT=false
+}
+
+echo "$(date '+%Y-%m-%d %H:%M:%S') restic backup ok: ${SNAPSHOT_COUNT} (${#DEGRADED[@]} degraded steps)" >> "${LOG}"
+"${HOMELAB}/scripts/kuma-push.sh" KUMA_PUSH_BACKUP up "backup ok: ${SNAPSHOT_COUNT}${WARNINGS}"
+telegram_send "${ICON} ${STACK_NAME} backup ${STATUS}: ${SNAPSHOT_COUNT}${B2_NOTE}${WARNINGS}" "${SILENT}"

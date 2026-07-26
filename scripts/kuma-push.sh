@@ -24,15 +24,23 @@ case "${env_name}" in
   KUMA_PUSH_WIKI_AGENT_REFRESH_MOC) job_id=wiki-map-of-content-refresh ;;
   KUMA_PUSH_WIKI_KARAKEEP) job_id=karakeep-wiki-intake ;;
   KUMA_PUSH_WIKI_PODCAST) job_id=wiki-podcast-transcription ;;
-  *) exit 0 ;;
+  # Never fail the calling job over telemetry, but never drop it silently
+  # either: a job that pings nothing looks identical to one that never ran.
+  *) echo "kuma-push: no check mapped to ${env_name} — telemetry dropped" >&2; exit 0 ;;
 esac
 
-[ -f "${HEALTHCHECKS_ENV}" ] || exit 0
+[ -f "${HEALTHCHECKS_ENV}" ] || {
+  echo "kuma-push: ${HEALTHCHECKS_ENV} missing — run healthchecks-reconcile.py; telemetry dropped" >&2
+  exit 0
+}
 set -a
 # shellcheck disable=SC1090
 source "${HEALTHCHECKS_ENV}"
 set +a
-[ -n "${HEALTHCHECKS_PING_KEY:-}" ] || exit 0
+[ -n "${HEALTHCHECKS_PING_KEY:-}" ] || {
+  echo "kuma-push: HEALTHCHECKS_PING_KEY unset in ${HEALTHCHECKS_ENV} — telemetry dropped" >&2
+  exit 0
+}
 
 case "${status}" in
   start) hc_suffix="/start" ;;
@@ -45,4 +53,5 @@ hc_base="${HEALTHCHECKS_BASE_URL:-http://127.0.0.1:8008}"
 curl -fsS -m 10 -X POST \
   -H "Content-Type: text/plain; charset=utf-8" \
   --data-binary "${message}" \
-  "${hc_base}/ping/${HEALTHCHECKS_PING_KEY}/${job_id}${hc_suffix}" >/dev/null 2>&1 || true
+  "${hc_base}/ping/${HEALTHCHECKS_PING_KEY}/${job_id}${hc_suffix}" >/dev/null 2>&1 ||
+  echo "kuma-push: ping ${job_id}${hc_suffix} failed to reach ${hc_base}" >&2

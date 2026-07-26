@@ -38,6 +38,12 @@ def subject_mocs(text, moc_slugs):
 
 def set_up(page, links):
     text = page.read_text()
+    # `up:` is reinserted after the `type:` line. Without that anchor the
+    # reinsert cannot fire, and writing anyway would strip an existing `up:`
+    # for good, so pages missing `type:` are reported and left alone.
+    if not re.search(r"^type: [^\n]*\n", text, flags=re.M):
+        print(f"up-sync skipped (no type: frontmatter): {page.name}")
+        return False
     stripped = re.sub(r"^up: .*\n", "", text, count=1, flags=re.M)
     line = f"up: [{', '.join(links)}]\n" if links else ""
     updated = re.sub(r"^(type: [^\n]*\n)", lambda m: m.group(1) + line,

@@ -27,7 +27,12 @@ HOMEPAGE_ENV = RUNTIME / "homepage.env"
 
 
 def write_secret(path: pathlib.Path, value: str) -> None:
-    path.write_text(value + "\n")
+    # Create the file already restricted. write_text() honours the umask, so
+    # the key would sit world-readable until the chmod landed.
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(descriptor, "w") as handle:
+        handle.write(value + "\n")
+    # O_CREAT's mode is ignored when the file already exists.
     path.chmod(0o600)
 
 

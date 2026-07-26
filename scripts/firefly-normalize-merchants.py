@@ -66,6 +66,23 @@ def pending_moves(firefly: Firefly, account_id: str, destination: str) -> list[d
     ]
 
 
+def split_updates(firefly: Firefly, move: dict) -> list[dict]:
+    """Every split of the group, with only the targeted one repointed.
+
+    Firefly replaces the whole split set on update, so sending just the split
+    being moved would delete the other legs of a split transaction. A split
+    listed by journal id alone is left exactly as it is.
+    """
+    group = firefly.call("GET", f"/transactions/{move['transaction_id']}")
+    updates = []
+    for split in group["data"]["attributes"]["transactions"]:
+        entry = {"transaction_journal_id": split["transaction_journal_id"]}
+        targeted = split["transaction_journal_id"] == move["journal_id"]
+        targeted and entry.update({"destination_id": move["to_account_id"]})
+        updates.append(entry)
+    return updates
+
+
 def apply_moves(firefly: Firefly, moves: list[dict], dry_run: bool) -> None:
     if dry_run:
         return
@@ -73,11 +90,7 @@ def apply_moves(firefly: Firefly, moves: list[dict], dry_run: bool) -> None:
         firefly.call(
             "PUT",
             f"/transactions/{move['transaction_id']}",
-            {
-                "transactions": [
-                    {"transaction_journal_id": move["journal_id"], "destination_id": move["to_account_id"]}
-                ]
-            },
+            {"transactions": split_updates(firefly, move)},
         )
 
 

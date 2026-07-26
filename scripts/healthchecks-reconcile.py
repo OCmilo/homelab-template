@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import pathlib
 import re
 import sys
@@ -17,6 +18,16 @@ DEFAULT_KEY = pathlib.Path("/opt/homelab/runtime/management-api-key")
 DEFAULT_PING_KEY = pathlib.Path("/opt/homelab/runtime/ping-key")
 DEFAULT_OUTPUT = pathlib.Path("/opt/homelab/runtime/ping-urls.env")
 DEFAULT_STATE = pathlib.Path("/opt/homelab/runtime/reconcile-state.json")
+
+
+def write_secret(path: pathlib.Path, value: str) -> None:
+    # Create the file already restricted. write_text() honours the umask, so
+    # the ping key would sit world-readable until the chmod landed.
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(descriptor, "w") as handle:
+        handle.write(value)
+    # O_CREAT's mode is ignored when the file already exists.
+    path.chmod(0o600)
 
 
 def load_registry(path: pathlib.Path) -> dict:
@@ -167,8 +178,7 @@ def main() -> int:
         )
         counts[job["monitoring"]] += 1
 
-    args.output.write_text("\n".join(env_lines) + "\n")
-    args.output.chmod(0o600)
+    write_secret(args.output, "\n".join(env_lines) + "\n")
     args.state.write_text(json.dumps(state, indent=2) + "\n")
     print(
         f"Reconciled {len(registry['jobs'])} checks: "
