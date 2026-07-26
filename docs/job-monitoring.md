@@ -76,7 +76,7 @@ delete unmanaged checks.
 
 ## Runtime and access
 
-- Image: `healthchecks/healthchecks:v4.2`, pinned by multi-architecture digest.
+- Image: `healthchecks/healthchecks:v4.3`, pinned by multi-architecture digest.
 - Private UI: `https://jobs.${STACK_HOST}.${PRIVATE_DOMAIN}`.
 - Local-only port: `http://127.0.0.1:8008`.
 - Database: SQLite in the `homelab_healthchecks-data` Colima named volume.

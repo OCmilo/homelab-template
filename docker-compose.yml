@@ -349,13 +349,18 @@ services:
   # the nightly restic run captures them. The backup script also runs
   # document_exporter first — a version-independent restore path that does not
   # depend on a healthy database copy.
+  # Only paperless is attached to paperless-net, so no other container on
+  # homelab_default can even open a connection to this broker.
   paperless-redis:
     image: redis:8-alpine
     container_name: paperless-redis
+    command: redis-server --requirepass ${PAPERLESS_REDIS_PASSWORD}
+    networks:
+      - paperless-net
     restart: unless-stopped
 
   paperless:
-    image: ghcr.io/paperless-ngx/paperless-ngx:2.20.15
+    image: ghcr.io/paperless-ngx/paperless-ngx:3.0.3
     container_name: paperless
     depends_on:
       - paperless-redis
@@ -363,7 +368,7 @@ services:
       USERMAP_UID: ${PUID}
       USERMAP_GID: ${PGID}
       PAPERLESS_TIME_ZONE: ${TZ}
-      PAPERLESS_REDIS: redis://paperless-redis:6379
+      PAPERLESS_REDIS: redis://:${PAPERLESS_REDIS_PASSWORD}@paperless-redis:6379
       PAPERLESS_SECRET_KEY: ${PAPERLESS_SECRET_KEY}
       PAPERLESS_URL: https://paperless.${STACK_HOST}.${PRIVATE_DOMAIN}
       PAPERLESS_CSRF_TRUSTED_ORIGINS: https://paperless.${STACK_HOST}.${PRIVATE_DOMAIN},http://${LAN_IP}:8000,http://${TAILSCALE_IP}:8000
@@ -380,6 +385,9 @@ services:
       - ./config/paperless/media:/usr/src/paperless/media
       - ./config/paperless/export:/usr/src/paperless/export
       - ${DATA_ROOT}/incoming/scans:/usr/src/paperless/consume
+    networks:
+      - default
+      - paperless-net
     restart: unless-stopped
 
   # Bookmark-everything manager (links, notes, images) with full-text search.
@@ -620,7 +628,7 @@ services:
   # application schedulers stay authoritative and report start/success/failure
   # here. SQLite lives on Colima's ext4 named volume, not a macOS bind mount.
   healthchecks:
-    image: healthchecks/healthchecks:v4.2@sha256:6b5f593d40994345053f05f86decfa9e17ab1e4422df2ae58abd032a7b14d8f6
+    image: healthchecks/healthchecks:v4.3@sha256:cd7bcd94350818b3944f82eb5995f48bdeab8c8627977578a569ffa73f56f56f
     container_name: healthchecks
     environment:
       TZ: ${TZ}
@@ -672,6 +680,12 @@ services:
       - ./config/caddy/data:/data
       - ./config/caddy/config:/config
     restart: unless-stopped
+
+networks:
+  # internal: the broker has no reason to reach the internet, and paperless
+  # keeps its own egress through the default network.
+  paperless-net:
+    internal: true
 
 volumes:
   jellyfin-config:
