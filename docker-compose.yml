@@ -291,8 +291,8 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     restart: unless-stopped
 
-  # Kuma's write-heavy SQLite corrupts on Colima bind mounts (twice on
-  # 2026-07-06); its data lives in a named volume (ext4 inside the VM).
+  # Kuma's write-heavy SQLite corrupts on Colima bind mounts, so its data
+  # lives in a named volume (ext4 inside the VM).
   # The backup script exports a consistent db copy out of the volume nightly.
   uptime-kuma:
     image: louislam/uptime-kuma:2
@@ -384,7 +384,7 @@ services:
 
   # Bookmark-everything manager (links, notes, images) with full-text search.
   # SQLite + Meilisearch data live in named volumes: write-heavy DBs corrupt
-  # on Colima bind mounts (radarr.db/kuma.db, 2026-07-06).
+  # on Colima bind mounts.
   karakeep:
     image: ghcr.io/karakeep-app/karakeep:0.32.0
     container_name: karakeep
@@ -499,7 +499,7 @@ services:
     command: sh /usr/local/bin/firefly-cron-run.sh daemon
     restart: unless-stopped
 
-  # Wealth tracking (docs/finance-stack.md Phase 3): IBKR/Kraken positions,
+  # Wealth tracking: IBKR positions,
   # cash balances, net worth in EUR. LAN/Tailscale-only via Caddy.
   ghostfolio:
     image: ghostfolio/ghostfolio:3.24.0
@@ -544,7 +544,7 @@ services:
 
   # IBKR positions/trades/dividends into Ghostfolio via Flex Web Service.
   # Upstream publishes no version tags — pinned by digest instead.
-  # Flex token expires 2027-06-12: regenerate in IBKR (Performance & Reports
+  # Flex tokens expire yearly: regenerate in IBKR (Performance & Reports
   # -> Flex Queries -> Flex Web Service Configuration) and update .env.
   ghostfolio-ibkr-sync:
     image: agusalex/ghostfolio-sync@sha256:264372a508bd82b9d1d159dd7f83da8c62dc0c8b60cfc3800d137b910d9a018b

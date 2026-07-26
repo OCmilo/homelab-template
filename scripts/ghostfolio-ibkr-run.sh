@@ -18,7 +18,7 @@ import urllib.request
 text = "Ghostfolio IBKR sync failed:\n{}".format(os.environ.get("ERROR_TEXT", "unknown error"))
 data = urllib.parse.urlencode({
     "chat_id": os.environ["TELEGRAM_CHAT_ID"],
-    "message_thread_id": os.environ.get("TELEGRAM_TOPIC_FINANCE", "208"),
+    "message_thread_id": os.environ.get("TELEGRAM_TOPIC_FINANCE", "1"),
     "text": text[:3500],
 }).encode()
 urllib.request.urlopen(

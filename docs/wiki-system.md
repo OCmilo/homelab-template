@@ -331,12 +331,17 @@ The Ask server requires `Authorization: Bearer $WIKI_ASK_TOKEN` on every route
 except `/health`; the plugin sends it from the `token` field in
 `system/schema/ask.json`. Without that gate anyone who could reach the port
 could spend OpenAI credits, rewrite the credit ledger, and start agent runs.
-It binds loopback unless `WIKI_ASK_HOST` widens it, and refuses to start on a
-routable address with no token configured. CORS stays permissive but never
-allows an `Authorization` header, so browser JavaScript on another origin
-cannot authenticate; the plugin reaches the server through Obsidian's
-`requestUrl`, which is not CORS-bound. CouchDB has no equivalent gate — keep
-both off the public internet.
+The token is mandatory and the server refuses to start without one — loopback
+included, since any local process can reach it. `WIKI_ASK_HOST` widens the bind
+address beyond loopback.
+
+Requests carrying an `Origin` header are rejected with 403 on those routes. A
+token by itself would not stop a page in the user's browser from reaching
+`127.0.0.1:8799`: the handler parses JSON whatever the Content-Type, so a
+`text/plain` POST is a CORS "simple request" that skips the preflight entirely
+and could hit `/ops/retry`. Only browsers send `Origin`; Obsidian's
+`requestUrl` does not, so the plugin is unaffected. CouchDB has no equivalent
+gate — keep both off the public internet.
 
 ## Intake
 

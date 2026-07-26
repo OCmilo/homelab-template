@@ -9,10 +9,17 @@ Read-only by construction: codex runs with --sandbox read-only, so a prompt
 injection or model mistake cannot touch the vault. Bypasses the wiki-agent
 run lock on purpose — answering writes nothing, so it never conflicts.
 
-Every route except /health requires `Authorization: Bearer $WIKI_ASK_TOKEN`.
-Without it, anyone who can reach the port could spend OpenAI credits, rewrite
-the credit ledger, and trigger agent runs. WIKI_ASK_HOST controls the bind
-address and defaults to loopback; widen it only alongside a real token.
+Every route except /health requires `Authorization: Bearer $WIKI_ASK_TOKEN`,
+and the token is mandatory — the server will not start without one. Anyone who
+reaches the port otherwise could spend OpenAI credits, rewrite the credit
+ledger, and trigger agent runs. WIKI_ASK_HOST controls the bind address and
+defaults to loopback.
+
+Requests carrying an `Origin` header are refused outright on those routes. A
+bearer token alone would not stop a page in the user's browser: this handler
+reads JSON regardless of Content-Type, so a `text/plain` POST is a CORS "simple
+request" that needs no preflight and would reach /ops/retry. Only browsers send
+Origin; the plugin uses Obsidian's requestUrl, which does not.
 """
 import hmac
 import json
@@ -28,7 +35,7 @@ from urllib.parse import parse_qs, urlparse
 
 from wiki_usage import WikiUsage
 
-HOMELAB = Path.home() / "homelab"
+HOMELAB = Path(os.environ.get("HOMELAB") or Path.home() / "homelab")
 VAULT = Path(os.environ.get("WIKI_VAULT", str(HOMELAB / "config" / "wiki-vault")))
 SKILL = HOMELAB / "config" / "wiki-agent" / "skills" / "answer-question.md"
 POLICY = HOMELAB / "config" / "wiki-agent" / "skills" / "untrusted-content-policy.md"
@@ -43,10 +50,21 @@ jobs = {}
 jobs_lock = threading.Lock()
 
 
+def unquoted(value):
+    """Strip one layer of matching surrounding quotes, either style.
+
+    Values with spaces or JSON must be quoted to survive `source .env` in the
+    shell scripts, and JSON forces single quotes.
+    """
+    text = value.strip()
+    quoted = len(text) > 1 and text[0] == text[-1] and text[0] in "\"'"
+    return text[1:-1] if quoted else text
+
+
 def load_env():
     entries = (HOMELAB / ".env").read_text().splitlines()
     pairs = [line.split("=", 1) for line in entries if "=" in line and not line.startswith("#")]
-    return {key.strip(): value.strip().strip('"') for key, value in pairs}
+    return {key.strip(): unquoted(value) for key, value in pairs}
 
 
 ENV_FILE = load_env()
@@ -187,15 +205,19 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def authorized(self):
-        """True when the caller may use anything beyond /health.
-
-        Note that Authorization is deliberately absent from the CORS allow-list
-        above, so browser JavaScript on another origin cannot authenticate at
-        all. The plugin uses Obsidian's requestUrl, which is not CORS-bound.
-        """
+        """True when the caller may use anything beyond /health."""
         route = urlparse(self.path).path
+        if route in PUBLIC_ROUTES:
+            return True
+        # Any Origin at all means a browser sent this, and no browser is a
+        # legitimate client here.
+        if self.headers.get("Origin"):
+            self.reply(403, {"error": "browser origins are not allowed", "code": "forbidden-origin"})
+            return False
         offered = self.headers.get("Authorization", "").removeprefix("Bearer ").strip()
-        allowed = route in PUBLIC_ROUTES or hmac.compare_digest(offered, TOKEN)
+        # TOKEN is guaranteed non-empty by main(); compare_digest("", "") is
+        # True, so an empty token would otherwise admit an empty header.
+        allowed = hmac.compare_digest(offered, TOKEN)
         allowed or self.reply(401, {"error": "unauthorized", "code": "unauthorized"})
         return allowed
 
@@ -303,14 +325,16 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    # Refusing to start beats starting wide open: a token-less server on a
-    # routable address is reachable by every device on the LAN and tailnet.
-    if not TOKEN and HOST != DEFAULT_HOST:
+    # Refusing to start beats starting wide open. Loopback is no excuse for
+    # skipping the token: any process on this machine can reach it, and a page
+    # in the user's browser can POST to 127.0.0.1 without a preflight.
+    if not TOKEN:
         raise SystemExit(
-            f"refusing to bind {HOST}:{PORT} without WIKI_ASK_TOKEN — "
-            "set a token in .env (openssl rand -hex 32) or leave WIKI_ASK_HOST unset"
+            "refusing to start without WIKI_ASK_TOKEN — generate one with "
+            "`openssl rand -hex 32`, put it in .env, and copy it into the "
+            "vault's system/schema/ask.json as \"token\""
         )
-    print(f"wiki ask server on {HOST}:{PORT} (auth: {'token' if TOKEN else 'loopback only'})", flush=True)
+    print(f"wiki ask server on {HOST}:{PORT} (token auth enabled)", flush=True)
     ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()
 
 

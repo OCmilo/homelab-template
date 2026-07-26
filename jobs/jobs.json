@@ -24,7 +24,7 @@
       "authority": "launchd",
       "source": "jobs/launchd/com.homelab.eb-consent-reminder.plist",
       "command": "scripts/eb-consent-reminder.sh",
-      "purpose": "Warn before the Revolut Enable Banking consent expires.",
+      "purpose": "Warn before the Enable Banking consent expires.",
       "schedule": {
         "type": "cron",
         "expression": "0 10 * * *"
@@ -216,7 +216,7 @@
       "authority": "container-cron",
       "source": "scripts/firefly-cron-run.sh",
       "command": "firefly-cron-run.sh autoimport",
-      "purpose": "Run the saved nightly Revolut import configuration.",
+      "purpose": "Run the saved nightly bank import configuration.",
       "schedule": {
         "type": "cron",
         "expression": "30 2 * * *"

@@ -7,8 +7,8 @@ config/firefly/rules.json is the source of truth. Modes:
   --apply    push the file to Firefly, then re-export to pick up new ids
 
 Apply resends every trigger and action with an explicit active flag:
-Firefly's rule update defaults a missing 'active' to false, which is how
-a bulk edit silently disabled 17 actions on 2026-07-22.
+Firefly's rule update defaults a missing 'active' to false, so a bulk edit
+that omits the flag silently disables every action it touches.
 
 Apply never deletes: rules that exist live but not in the file are
 reported so removal stays a deliberate UI/API action followed by --export.

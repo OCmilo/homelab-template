@@ -3,7 +3,7 @@
 Last verified: 2026-07-26
 
 How to stand this stack up on a fresh machine. Written for someone starting
-from nothing; the original deployment runs on an Intel MacBook Pro under macOS
+from nothing; the reference deployment is an Intel MacBook Pro running macOS
 with Colima, and everything here assumes that shape unless noted.
 
 Work through the phases in order — later phases depend on earlier ones. Nothing
@@ -48,10 +48,8 @@ Colima gotchas that will bite you later if you forget them:
 - macOS `/tmp` is **not** mounted into the VM. A bind mount of `/tmp/foo`
   silently mounts an empty directory. Keep every mount under `$HOME`.
 - Write-heavy SQLite databases must live in named volumes (ext4 inside the VM),
-  never on a macOS bind mount. Two databases were corrupted learning this (the
-  upstream repo keeps the postmortem at
-  `docs/postmortems/2026-07-06-sqlite-over-colima.md`). The compose file already
-  follows the rule — do not "simplify" those volumes.
+  never on a macOS bind mount. Two databases were corrupted learning this. The
+  compose file already follows the rule — do not "simplify" those volumes.
 - Over non-interactive SSH the Docker credential helper is unavailable; for
   anonymous pulls use `DOCKER_CONFIG=$(mktemp -d)` together with
   `DOCKER_HOST=unix://$HOME/.colima/default/docker.sock`.
@@ -96,9 +94,10 @@ Four assumptions are baked in deeply enough that changing them means editing
 code, not configuration. Read these before you deviate:
 
 - **The repo defaults to `~/homelab`.** `scripts/install-jobs.sh` stamps the
-  real checkout path into the launchd agents, so those work anywhere, but the
-  host scripts fall back to `~/homelab` when `HOMELAB` is unset. Export
-  `HOMELAB=/your/path` (or clone to `~/homelab`) before running them.
+  real checkout path into each launchd agent's `ProgramArguments` *and* its
+  `HOMELAB` environment variable, so scheduled jobs work from any path. Running
+  a script by hand gets no such environment: export `HOMELAB=/your/path` first,
+  or it will silently operate on `~/homelab` instead.
 - **The compose project is named `homelab`.** Two volumes are declared
   `external: true` with literal names (`homelab_jellyfin-config`,
   `homelab_healthchecks-data`), and `scripts/backup-restic.sh` exports several
@@ -106,15 +105,26 @@ code, not configuration. Read these before you deviate:
   changes the prefix and breaks both. Create the external volumes before the
   first `up`:
   `docker volume create homelab_jellyfin-config && docker volume create homelab_healthchecks-data`.
-- **Two dependencies are fetched out of band.** `scripts/install-adguardhome-host.sh`
-  expects the AdGuard Home binary at `bin/AdGuardHome` (download the build for
-  your architecture — the URL in the script is `darwin_amd64`), and
-  `livesync-bridge` builds from a clone in `cache/build/livesync-bridge`
-  because upstream publishes no image.
+- **Two dependencies are fetched out of band, and one of them blocks the first
+  `up`.** `livesync-bridge` builds from a source clone because upstream
+  publishes no image, and its build context is gitignored — so `docker compose
+  up -d` fails on a fresh checkout until you create it. Do this before step 4,
+  or skip it and delete the `livesync-bridge` service if you are not running
+  the wiki:
+
+  ```bash
+  git clone https://github.com/vrtmrz/livesync-bridge.git cache/build/livesync-bridge
+  git -C cache/build/livesync-bridge checkout f27f78c   # matches the pinned image tag
+  ```
+
+  Separately, `scripts/install-adguardhome-host.sh` expects the AdGuard Home
+  binary at `bin/AdGuardHome`. Download the build for your architecture — the
+  URL in the script is `darwin_amd64`, which is wrong on Apple Silicon.
 - **Locale defaults are European.** Paperless OCR is `por+spa+eng`, Ghostfolio
-  reports in EUR, schedules assume `Europe/Madrid`, and subtitle translation has
-  a fixed target language. Change them in `docker-compose.yml`, `jobs/jobs.json`,
-  and `.env` as needed.
+  reports in EUR, schedules assume `Europe/Madrid` (also force-set on the
+  Healthchecks profile by `scripts/healthchecks-bootstrap.py`), and subtitle
+  translation targets `SUBTRANS_LANGS`. Change them in `docker-compose.yml`,
+  `jobs/jobs.json`, `scripts/healthchecks-bootstrap.py`, and `.env` as needed.
 
 ## 3. Storage layout
 
@@ -152,6 +162,18 @@ docker compose up -d
 Services with credentials to configure in their own UI on first run: Sonarr,
 Radarr, Prowlarr, Bazarr, Jellyseerr, Maintainerr, qBittorrent, Jellyfin,
 Karakeep, Paperless, Firefly III, Ghostfolio, Beszel, Uptime Kuma.
+
+Four services bind-mount a **file** that this repo does not ship. Docker
+silently creates a directory in place of a missing bind-mount source, and the
+container then fails on a directory where it expected a file — so create each
+one (or drop the service) before starting it:
+
+| File | Needed by |
+|---|---|
+| `config/decluttarr/config.yaml` | decluttarr — see upstream's sample config |
+| `config/ghostfolio/mapping.yaml` | the IBKR sync; maps symbols to Ghostfolio assets |
+| `config/firefly-importer/eb-private.pem` | Enable Banking; `chmod 600` |
+| `config/livesync-bridge/config.json` | the wiki bridge — `docs/wiki-system.md` |
 
 The downloads group (qBittorrent, Prowlarr, FlareSolverr, Shelfmark) runs inside
 gluetun's network namespace. Consequences worth internalizing: those containers
@@ -247,7 +269,7 @@ A change is done when the service answers on its port from the LAN and through
 Tailscale. Beyond that:
 
 ```bash
-docker compose config          # renders? then your .env is complete
+docker compose config          # substitutes cleanly, no 'variable is not set' warnings
 docker compose ps              # everything up and healthy
 scripts/install-jobs.sh        # all jobs report "unchanged"
 TRIVY_NOTIFY=false scripts/trivy-scan.sh   # first vulnerability baseline

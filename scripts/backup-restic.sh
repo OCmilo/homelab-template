@@ -6,7 +6,7 @@
 #
 # SQLite safety: host-side sqlite3 against live container databases is FORBIDDEN —
 # host and guest SQLite do not share locks coherently over the Colima mount, and
-# host reads corrupted radarr.db and kuma.db on 2026-07-06. Instead, the SQLite
+# host-side reads have corrupted service databases outright. Instead, the SQLite
 # services are stopped for the ~10s restic run so their bind-mounted files are
 # quiesced and consistent. Uptime Kuma (named volume) stays up; its db is exported
 # with sqlite3 INSIDE the VM, where the filesystem is coherent.
@@ -15,9 +15,9 @@
 # version-independent export (originals + archive + metadata manifest) that
 # restores cleanly even if the raw database copy is unusable.
 #
-# iCloud hazard: fileproviderd can wedge an open() on the repo forever — on
-# 2026-07-07 restic hung 8h mid-backup with all services stopped and no alert
-# (fail() never ran). Every step that can block therefore runs under run_timed,
+# iCloud hazard: fileproviderd can wedge an open() on the repo forever. That has
+# hung restic for hours mid-backup with all services stopped and no alert raised,
+# since fail() never ran. Every step that can block therefore runs under run_timed,
 # turning a hang into a failure that alerts and restarts services via the trap.
 # SIGTERM was not enough to unstick that hang; the watchdog uses SIGKILL.
 set -euo pipefail
@@ -32,7 +32,9 @@ LOG="${HOMELAB}/config/backup.log"
 
 env_value() {
   local key=$1
-  sed -n "s/^${key}=//p" "${HOMELAB}/.env" | tail -n 1 | sed -e 's/^"\(.*\)"$/\1/'
+  # Values may be quoted either way: spaces need quoting for `source .env`,
+  # and JSON values force single quotes.
+  sed -n "s/^${key}=//p" "${HOMELAB}/.env" | tail -n 1 | sed -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'$/\1/"
 }
 
 DATA_ROOT="$(env_value DATA_ROOT)"

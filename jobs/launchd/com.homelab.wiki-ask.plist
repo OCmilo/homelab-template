@@ -4,6 +4,11 @@
 <dict>
 	<key>Label</key>
 	<string>com.homelab.wiki-ask</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>HOMELAB</key>
+		<string>@@HOME@@/homelab</string>
+	</dict>
 	<key>ProgramArguments</key>
 	<array>
 		<string>/usr/bin/python3</string>

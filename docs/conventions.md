@@ -12,8 +12,7 @@ this file is the part that travels.
   virtiofs lock/cache incoherence corrupts it. Stop the service first or use
   `docker exec`. Write-heavy SQLite databases belong in named volumes (ext4
   inside the Colima VM), never on a macOS bind mount. The rule comes from an
-  incident that corrupted two databases; the upstream repo keeps the postmortem
-  at `docs/postmortems/2026-07-06-sqlite-over-colima.md`.
+  incident that corrupted two service databases outright.
 - Do not add Linux GPU passthrough (`/dev/dri`): containers run inside the
   Colima VM and cannot reach VideoToolbox or the iGPU. Prefer Direct Play.
 - Bind mounts from macOS `/tmp` are silently empty inside the VM — Colima does

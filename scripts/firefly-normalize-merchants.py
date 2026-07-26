@@ -2,8 +2,8 @@
 """Collapse per-transaction merchant accounts into one canonical account each.
 
 The Enable Banking importer names every expense account after the transaction
-description, so each Glovo order produced its own account. Rules trigger on
-description rather than account, so repointing account links is safe for them.
+description, so a merchant billing per order ends up with one account per order.
+Rules trigger on description rather than account, so repointing links is safe.
 Every move is appended to normalize-journal.jsonl so it can be undone.
 Runs nightly at 08:30 via com.homelab.firefly-normalize-merchants.plist
 """

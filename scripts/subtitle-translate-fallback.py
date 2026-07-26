@@ -5,16 +5,33 @@
 # so it never exhausts connections/file descriptors. Idempotent: skips languages whose
 # file already exists. Reads the Bazarr API key from the gitignored config at runtime.
 # Grace period is configurable via SUBTRANS_GRACE_DAYS (default 5).
-import json, urllib.request, urllib.parse, os, time, subprocess, sys
+import json, urllib.request, urllib.parse, os, pathlib, time, subprocess, sys
 
-CFG = os.path.expanduser("~/homelab/config/bazarr/config/config.yaml")
-HOMELAB = os.path.expanduser("~/homelab")
+HOMELAB = os.environ.get("HOMELAB") or os.path.expanduser("~/homelab")
+CFG = os.path.join(HOMELAB, "config/bazarr/config/config.yaml")
 BASE = "http://127.0.0.1:6767/api"
 GRACE_DAYS = int(os.environ.get("SUBTRANS_GRACE_DAYS", "5"))
-LANGS = ("es", "pb")
+LANGS = tuple(filter(None, os.environ.get("SUBTRANS_LANGS", "es,pb").split(",")))
 TAG = {"es": "es", "pb": "pt-BR"}
 DATA_CT = "/data"
-DATA_HOST = os.path.expanduser("~/MediaData")
+
+
+def data_host():
+    """Host path behind the containers' /data mount.
+
+    Reading DATA_ROOT matters for correctness, not just tidiness: hostpath()
+    maps container paths back through it, and a wrong root makes every
+    existence check miss, so the job re-requests a translation for every
+    episode on every run and still reports success.
+    """
+    for line in pathlib.Path(HOMELAB, ".env").read_text().splitlines():
+        key, _, value = line.partition("=")
+        if key.strip() == "DATA_ROOT":
+            return os.path.expanduser(value.strip().strip('"').strip("'"))
+    return os.path.expanduser("~/MediaData")
+
+
+DATA_HOST = data_host()
 NOW = time.time()
 POLL_TRIES, POLL_SLEEP = 60, 3
 

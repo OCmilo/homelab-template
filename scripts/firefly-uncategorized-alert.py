@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Alert on Firefly transactions that nothing categorised.
 
-Silent rule breakage is the failure this guards against: on 2026-07-22 a bulk
-rule edit switched every action off and nothing noticed for three days. It runs
-last in the chain, so anything it reports escaped both the rules and history.
+Silent rule breakage is the failure this guards against: a bulk rule edit can
+switch every action off and go unnoticed for days. It runs last in the chain,
+so anything it reports escaped both the rules and history.
 Runs daily at 09:00 via com.homelab.firefly-uncategorized-alert.plist
 """
 

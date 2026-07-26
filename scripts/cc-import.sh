@@ -1,5 +1,5 @@
 #!/bin/bash
-# Import a Revolut credit card statement CSV into Firefly III.
+# Import a credit card statement CSV into Firefly III.
 # Usage: cc-import.sh <statement.csv>
 #
 # Strips "Credit card repayment" TRANSFER rows first: the checking-account
@@ -11,7 +11,7 @@ export PATH="$PATH:/usr/local/bin:/opt/homebrew/bin"
 
 HOMELAB="${HOMELAB:-${HOME}/homelab}"
 THREAD_FINANCE="$(sed -n 's/^TELEGRAM_TOPIC_FINANCE=//p' "${HOMELAB}/.env")"
-THREAD_FINANCE="${THREAD_FINANCE:-208}"
+THREAD_FINANCE="${THREAD_FINANCE:-1}"
 CSV="${1:?usage: cc-import.sh <statement.csv>}"
 IMPORT_DIR="${HOMELAB}/config/firefly-importer/import"
 CONFIG="${HOMELAB}/config/firefly-importer/cc-statement.json"

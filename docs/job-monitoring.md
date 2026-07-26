@@ -134,19 +134,19 @@ helper reads the project ping key from `config/healthchecks/ping-urls.env`
 and builds `/ping/<key>/<job id>`; job ids are the Healthchecks check slugs.
 It never logs the key.
 
-The three Firefly host jobs added 2026-07-25 (merchant normalization,
-category learning, uncategorized alert) skip the shim and ping Healthchecks
-directly through `scripts/firefly_lib.py`, using the same ping-key file and
-the loopback base URL `http://127.0.0.1:8008`.
+Three Firefly host jobs (merchant normalization, category learning,
+uncategorized alert) skip the shim and ping Healthchecks directly through
+`scripts/firefly_lib.py`, using the same ping-key file and the loopback base
+URL `http://127.0.0.1:8008`.
 
 The Firefly and Ghostfolio container scripts send the same signals directly
 with their container-network base URL (`http://healthchecks:8000`). Ping
 failures are non-fatal: monitoring must never turn a successful business job
 into a failed job.
 
-The migration burn-in completed on 2026-07-26: the legacy scheduled-job push
-monitors and the "Scheduled Jobs" status-page group were removed from Kuma.
-Uptime Kuma remains for service and endpoint monitoring only.
+Scheduled-job telemetry lives entirely in Healthchecks; Uptime Kuma is for
+service and endpoint monitoring only. If you migrate from a Kuma-based setup,
+retire its scheduled-job push monitors once Healthchecks has burned in.
 
 ## Backup and restore
 

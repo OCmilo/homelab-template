@@ -20,7 +20,8 @@ CACHE_DIR="${HOMELAB}/config/trivy/cache"
 env_var() {
   local name=$1
   local default=${2:-}
-  sed -n "s/^${name}=//p" "${ENV_FILE}" 2>/dev/null | tail -n 1 | sed -e 's/^"\(.*\)"$/\1/' | grep . || printf '%s' "${default}"
+  # Values may be quoted either way; see backup-restic.sh env_value().
+  sed -n "s/^${name}=//p" "${ENV_FILE}" 2>/dev/null | tail -n 1 | sed -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'$/\1/" | grep . || printf '%s' "${default}"
 }
 
 TRIVY_IMAGE="${TRIVY_IMAGE:-$(env_var TRIVY_IMAGE aquasec/trivy:0.72.0)}"
@@ -44,7 +45,7 @@ telegram_send() {
   [ "${TRIVY_NOTIFY}" = "true" ] || return 0
   token="$(env_var TELEGRAM_BOT_TOKEN)"
   chat="$(env_var TELEGRAM_CHAT_ID)"
-  topic="$(env_var TELEGRAM_TOPIC_TRIVY 6)"
+  topic="$(env_var TELEGRAM_TOPIC_TRIVY 1)"
   [ -n "${token}" ] && [ -n "${chat}" ] || return 0
   curl -s -m 10 "https://api.telegram.org/bot${token}/sendMessage" \
     -d chat_id="${chat}" -d message_thread_id="${topic}" \
@@ -259,7 +260,7 @@ if not notify:
 
 token = env_var("TELEGRAM_BOT_TOKEN")
 chat = env_var("TELEGRAM_CHAT_ID")
-topic = env_var("TELEGRAM_TOPIC_TRIVY", "6")
+topic = env_var("TELEGRAM_TOPIC_TRIVY", "1")
 if not token or not chat:
     sys.exit(0)
 
@@ -398,7 +399,7 @@ scan_candidate() {
         --image-src remote \
         --scanners vuln \
         --severity "${TRIVY_SEVERITY}" \
-        "${ignore_unfixed_arg[@]}" \
+        ${ignore_unfixed_arg[@]+"${ignore_unfixed_arg[@]}"} \
         --exit-code 1 \
         --format json \
         --output "/reports/$(basename "${output}")" \
@@ -476,7 +477,7 @@ while IFS= read -r image_ref; do
         --image-src docker \
         --scanners vuln \
         --severity "${TRIVY_SEVERITY}" \
-        "${ignore_unfixed_arg[@]}" \
+        ${ignore_unfixed_arg[@]+"${ignore_unfixed_arg[@]}"} \
         --exit-code 1 \
         --format json \
         --output "/reports/${safe_name}.json" \

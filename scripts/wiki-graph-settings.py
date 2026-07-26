@@ -3,8 +3,8 @@
 
 Tags are flat; a page's PRIMARY subject is its first tag. Colors are stable:
 system/schema/colors.json maps each subject to a palette slot ("1".."6") on
-first sight and never reassigns. Canvas boards were removed 2026-07-17 by user
-verdict — any stray *.canvas under wiki/mocs is pruned here.
+first sight and never reassigns. Set WIKI_PRUNE_CANVAS=true to also delete any
+*.canvas under wiki/mocs on every run; it is off by default.
 """
 import json
 import os
@@ -13,6 +13,9 @@ from pathlib import Path
 
 VAULT = Path(os.environ.get("WIKI_VAULT", str(Path.home() / "homelab" / "config" / "wiki-vault")))
 MOCS = VAULT / "wiki" / "mocs"
+# Opt-in: this unlinks files the user may have authored by hand, and it deletes
+# them from disk rather than from the vault's git history.
+PRUNE_CANVAS = os.environ.get("WIKI_PRUNE_CANVAS", "").lower() == "true"
 COLORS_FILE = VAULT / "system" / "schema" / "colors.json"
 COLOR_NAMES = {"1": "nebula pink #ff6b9d", "2": "solar amber #ffa657", "3": "starlight gold #e3c567", "4": "aurora mint #3ddbb4", "5": "ion blue #4cc9f0", "6": "nebula violet #a78bfa"}
 
@@ -100,7 +103,7 @@ def main():
     subjects = sorted({s for _, t in concepts + sources if (s := primary_subject(t))})
     colors = assign_colors(subjects)
     written = write_if_changed(MOCS / "graph-settings.md", graph_settings(subjects, colors))
-    pruned = sorted(MOCS.glob("*.canvas"))
+    pruned = sorted(MOCS.glob("*.canvas")) * PRUNE_CANVAS
     [canvas.unlink() for canvas in pruned]
     print("updated:", [written] if written else "nothing", "| pruned:", [canvas.name for canvas in pruned] or "-")
 

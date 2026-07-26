@@ -4,7 +4,12 @@
 <dict>
     <key>Label</key>
     <string>com.homelab.wiki-agent-moc</string>
-    <key>ProgramArguments</key>
+    <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOMELAB</key>
+    <string>@@HOME@@/homelab</string>
+  </dict>
+  <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
         <string>@@HOME@@/homelab/scripts/wiki-agent.sh</string>

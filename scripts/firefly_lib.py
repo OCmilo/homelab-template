@@ -24,6 +24,18 @@ PAGE_SIZE = 200
 PING_SUFFIX = {"start": "/start", "success": "", "fail": "/fail"}
 
 
+def unquoted(value: str) -> str:
+    """Strip one layer of matching surrounding quotes.
+
+    Values containing spaces or JSON have to be quoted to survive `source .env`
+    in the shell scripts, and JSON forces single quotes, so both styles arrive
+    here. GHOSTFOLIO_ACCOUNT_MAP is the case that made this necessary.
+    """
+    text = value.strip()
+    quoted = len(text) > 1 and text[0] == text[-1] and text[0] in "\"'"
+    return text[1:-1] if quoted else text
+
+
 def read_env(path: pathlib.Path) -> dict[str, str]:
     values = {}
     for line in path.read_text().splitlines():
@@ -31,7 +43,7 @@ def read_env(path: pathlib.Path) -> dict[str, str]:
         usable = stripped and not stripped.startswith("#") and "=" in stripped
         if usable:
             key, _, value = stripped.partition("=")
-            values[key.strip()] = value.strip().strip('"')
+            values[key.strip()] = unquoted(value)
     return values
 
 
