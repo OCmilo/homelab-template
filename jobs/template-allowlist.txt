@@ -4,7 +4,7 @@
 # omission — it simply does not ship until it is named here.
 #
 # Anything holding machine facts, credentials, or personal content stays out:
-# CLAUDE.md, docs/current-state.md, docs/finance-stack.md, docs/llm-wiki-spec.md,
+# AGENTS.md, docs/current-state.md, docs/finance-stack.md, docs/llm-wiki-spec.md,
 # docs/book-audiobook-flow-spec.md, docs/paperless-proton-mail.md,
 # docs/postmortems/, config/firefly/*.json, assets/.
 .env.example
@@ -18,6 +18,8 @@ jobs/jobs.json
 jobs/launchd/
 jobs/template-allowlist.txt
 config/wiki-agent/skills/
+config/wiki-agent/opencode/opencode.json
+config/wiki-agent/opencode/sandbox.sb
 obsidian/wiki-dashboard/
 # Harness fixture regenerated from a real vault by regen-vault-data.py — it
 # carries the note titles of whoever last ran it.

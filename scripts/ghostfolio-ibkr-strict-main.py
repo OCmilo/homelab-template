@@ -40,10 +40,18 @@ def configure_ibflex_download_retries():
         )
 
     original_download = sync_ibkr_module.client.download
+    original_sleep = sync_ibkr_module.client.time.sleep
 
     def download_with_retries(token, query_id, *args, **kwargs):
         kwargs.setdefault("max_tries", max_tries)
         for attempt in range(1, max_tries + 1):
+            # ibflex's download() polls with the delay returned by IBKR (usually
+            # one second).  Pace that internal loop so MAX_TRIES and the
+            # configured delay really describe the intended retry window.
+            def wait_for_statement(delay):
+                original_sleep(max(delay, retry_delay))
+
+            sync_ibkr_module.client.time.sleep = wait_for_statement
             try:
                 return original_download(token, query_id, *args, **kwargs)
             except sync_ibkr_module.client.ResponseCodeError as error:
@@ -60,6 +68,8 @@ def configure_ibflex_download_retries():
                     retry_delay,
                 )
                 time.sleep(retry_delay)
+            finally:
+                sync_ibkr_module.client.time.sleep = original_sleep
 
     sync_ibkr_module.client.download = download_with_retries
     logger.info(

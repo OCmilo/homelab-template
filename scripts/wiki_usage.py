@@ -31,6 +31,9 @@ CREDIT_SNAPSHOT = STATE_DIR / "credit.json"
 OPENAI_COST_CACHE = STATE_DIR / "openai-costs.json"
 OPENAI_COST_CACHE_SECONDS = 300
 
+CODEX = "codex"
+OPENCODE = "opencode"
+
 DEFAULT_PRICES = {
     "gpt-5.4-nano": {"input": 0.20, "cached_input": 0.02, "output": 1.25},
     "gpt-5.4-mini": {"input": 0.75, "cached_input": 0.075, "output": 4.50},
@@ -314,7 +317,7 @@ class WikiUsage:
 
     def record(self, *, kind: str, model: str, usage: dict, status: str,
                timestamp: str | None = None, run_id: str | None = None,
-               source: str = "codex-json", error: str = "") -> bool:
+               source: str = f"{CODEX}-json", error: str = "") -> bool:
         cost_usd, cost_eur, saved_eur = self.cost(model, usage)
         saved_usd = saved_eur / self.usd_to_eur if self.usd_to_eur else 0
         event = {
@@ -338,14 +341,15 @@ class WikiUsage:
         return self.append(event)
 
     def record_failure(self, *, kind: str, model: str, status: str,
-                       error: str, run_id: str | None = None) -> bool:
+                       error: str, run_id: str | None = None,
+                       runner: str = CODEX) -> bool:
         return self.record(
             kind=kind,
             model=model,
             usage={},
             status=status,
             run_id=run_id,
-            source="codex-error",
+            source=f"{runner}-error",
             error=error,
         )
 
@@ -372,7 +376,36 @@ class WikiUsage:
         }
 
     @staticmethod
-    def error_from_codex_json(text: str) -> str:
+    def usage_from_opencode_json(text: str) -> dict | None:
+        # opencode reports input, output, reasoning and cached reads as disjoint
+        # buckets that sum to `total`. Both the ledger and cost() expect Codex's
+        # shape instead, where input already contains the cached reads and output
+        # already contains reasoning. Folding them here keeps one costing path.
+        usages = []
+        for line in text.splitlines():
+            try:
+                item = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            tokens = (item.get("part") or {}).get("tokens")
+            if item.get("type") != "step_finish" or not isinstance(tokens, dict):
+                continue
+            cached = int((tokens.get("cache") or {}).get("read", 0) or 0)
+            usages.append(
+                {
+                    "input_tokens": int(tokens.get("input", 0) or 0) + cached,
+                    "cached_input_tokens": cached,
+                    "output_tokens": int(tokens.get("output", 0) or 0)
+                    + int(tokens.get("reasoning", 0) or 0),
+                    "reasoning_output_tokens": int(tokens.get("reasoning", 0) or 0),
+                }
+            )
+        return usages and {
+            key: sum(usage[key] for usage in usages) for key in usages[0]
+        } or None
+
+    @staticmethod
+    def error_from_agent_json(text: str) -> str:
         messages = []
         for line in text.splitlines():
             try:
@@ -380,15 +413,27 @@ class WikiUsage:
             except json.JSONDecodeError:
                 continue
             if item.get("type") == "error":
-                messages.append(str(item.get("message") or item.get("error") or ""))
+                error = item.get("error") or item.get("message") or ""
+                detail = isinstance(error, dict) and (
+                    error.get("message")
+                    or (error.get("data") or {}).get("message")
+                    or error.get("name")
+                )
+                messages.append(str(detail or error))
             elif item.get("type") == "turn.failed":
                 error = item.get("error") or {}
                 messages.append(str(error.get("message") if isinstance(error, dict) else error))
         return "\n".join(message for message in messages if message)
 
-    def record_codex_output(self, text: str, **metadata) -> bool:
-        usage = self.usage_from_codex_json(text)
-        return bool(usage) and self.record(usage=usage, **metadata)
+    def record_agent_output(self, text: str, runner: str = CODEX, **metadata) -> bool:
+        parse = {
+            CODEX: self.usage_from_codex_json,
+            OPENCODE: self.usage_from_opencode_json,
+        }[runner]
+        usage = parse(text)
+        return bool(usage) and self.record(
+            usage=usage, source=f"{runner}-json", **metadata
+        )
 
     def pending_counts(self) -> dict:
         inbox = [
@@ -541,6 +586,7 @@ def main() -> int:
     record.add_argument("--status", default="completed")
     record.add_argument("--run-id")
     record.add_argument("--error-log", type=Path)
+    record.add_argument("--runner", choices=[CODEX, OPENCODE], default=CODEX)
     sub.add_parser("summary")
     backfill = sub.add_parser("backfill-sessions")
     backfill.add_argument("--root", type=Path, default=HOMELAB / "config/wiki-agent/codex-home/sessions")
@@ -549,25 +595,32 @@ def main() -> int:
     if args.command == "record":
         text = args.json_log.read_text(errors="replace")
         error = args.error_log.read_text(errors="replace") if args.error_log else ""
-        error = error or usage_ledger.error_from_codex_json(text)
-        recorded = usage_ledger.record_codex_output(
+        error = error or usage_ledger.error_from_agent_json(text)
+        recorded = usage_ledger.record_agent_output(
             text,
+            runner=args.runner,
             kind=args.kind,
             model=args.model,
             status=args.status,
             run_id=args.run_id,
             error=error if args.status != "completed" else "",
         )
-        if not recorded and args.status != "completed":
-            recorded = usage_ledger.record_failure(
-                kind=args.kind,
-                model=args.model,
-                status=args.status,
-                error=error,
-                run_id=args.run_id,
-            )
-        if not recorded:
-            print("wiki usage: no token usage found in Codex JSON", file=sys.stderr)
+        # A run whose usage will not parse still has to reach the ledger, even
+        # when it completed. Dropping it leaves the dashboard reporting no spend
+        # on a run that really billed, and nothing downstream notices — the same
+        # silent-success failure the work gate exists to prevent.
+        recorded or usage_ledger.record_failure(
+            kind=args.kind,
+            model=args.model,
+            status=args.status,
+            error=error or f"no token usage found in {args.runner} JSON output",
+            run_id=args.run_id,
+            runner=args.runner,
+        )
+        recorded or print(
+            f"wiki usage: no token usage found in {args.runner} JSON",
+            file=sys.stderr,
+        )
         return 0
     if args.command == "summary":
         print(json.dumps(usage_ledger.summary(), indent=2))

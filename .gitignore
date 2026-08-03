@@ -1,10 +1,17 @@
 .env
-# config is runtime state (gitignored) — except wiki agent skill prompts,
-# which are config-as-code (no secrets); codex-home auth + state stay ignored
+# config is runtime state (gitignored) — except wiki agent skill prompts and
+# the opencode permission map, which are config-as-code (no secrets);
+# codex-home auth + state stay ignored
 config/*
 !config/wiki-agent/
 config/wiki-agent/*
 !config/wiki-agent/skills/
+# Only the permission map, never the directory: opencode writes auth.json and
+# state alongside it, and this tree is exported to the public template repo.
+!config/wiki-agent/opencode/
+config/wiki-agent/opencode/*
+!config/wiki-agent/opencode/opencode.json
+!config/wiki-agent/opencode/sandbox.sb
 cache/
 bin/
 config/adguardhome-host/admin-password.txt

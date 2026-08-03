@@ -119,6 +119,7 @@ services:
       - "8989:8989"
     volumes:
       - ./config/sonarr:/config
+      - ./scripts/sonarr-anime-import-guard.sh:/custom-scripts/sonarr-anime-import-guard.sh:ro
       - ${DATA_ROOT}:/data
     restart: unless-stopped
 
@@ -333,25 +334,6 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     restart: unless-stopped
 
-  # Notifies Telegram when pinned images have new releases upstream;
-  # deliberate updates instead of Watchtower-style auto-pulls
-  diun:
-    image: crazymax/diun:4.33.0
-    container_name: diun
-    profiles: [monitoring]
-    environment:
-      TZ: ${TZ}
-      DIUN_WATCH_SCHEDULE: "0 8 * * *"
-      DIUN_PROVIDERS_DOCKER: "true"
-      DIUN_PROVIDERS_DOCKER_WATCHBYDEFAULT: "true"
-      DIUN_NOTIF_TELEGRAM_TOKEN: ${TELEGRAM_BOT_TOKEN}
-      # chatID:topicID — posts into the Diun topic of the stack's forum group
-      DIUN_NOTIF_TELEGRAM_CHATIDS: "${TELEGRAM_CHAT_ID}:${TELEGRAM_TOPIC_DIUN:-1}"
-    volumes:
-      - ./config/diun:/data
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-    restart: unless-stopped
-
   # Weekly TRaSH-guide custom-format sync into Sonarr/Radarr
   recyclarr:
     image: ghcr.io/recyclarr/recyclarr:8.6.0
@@ -398,6 +380,10 @@ services:
       PAPERLESS_ALLOWED_HOSTS: paperless.${STACK_HOST}.${PRIVATE_DOMAIN},paperless,${LAN_IP},${TAILSCALE_IP},localhost
       PAPERLESS_OCR_LANGUAGE: ${PAPERLESS_OCR_LANGUAGE:-eng}
       PAPERLESS_OCR_LANGUAGES: ${PAPERLESS_OCR_LANGUAGES:-}
+      # Keep OCR from monopolising the four-vCPU Colima VM.  This trades
+      # ingestion throughput for lower CPU and memory spikes.
+      PAPERLESS_TASK_WORKERS: "1"
+      PAPERLESS_THREADS_PER_WORKER: "2"
       PAPERLESS_ADMIN_USER: ${PAPERLESS_ADMIN_USER}
       PAPERLESS_ADMIN_PASSWORD: ${PAPERLESS_ADMIN_PASSWORD}
     ports:

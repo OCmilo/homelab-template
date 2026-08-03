@@ -3,7 +3,7 @@
 Last verified: 2026-07-26
 
 The rules that hold across the whole stack, independent of who runs it. Machine
-facts (hostnames, IPs, personal accounts) live in the repo root `CLAUDE.md`;
+facts (hostnames, IPs, personal accounts) live in the repo root `AGENTS.md`;
 this file is the part that travels.
 
 ## Hard rules
@@ -78,7 +78,7 @@ this file is the part that travels.
 - Bring up / apply changes: `docker compose up -d`
 - Logs: `docker compose logs -f <service>`, or Dozzle at
   `https://logs.${STACK_HOST}.${PRIVATE_DOMAIN}`
-- Update images: bump the tag when Diun notifies, then
+- Update images: review pinned image versions during planned maintenance, then
   `docker compose pull && docker compose up -d`
 - Vulnerability scan: `TRIVY_NOTIFY=false scripts/trivy-scan.sh` writes reports
   under `config/trivy/reports/latest`; scheduled weekly by launchd.

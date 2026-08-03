@@ -261,24 +261,6 @@
       "monitoring": "active"
     },
     {
-      "id": "diun-image-update-scan",
-      "name": "Diun image update scan",
-      "module": "monitoring",
-      "authority": "application-cron",
-      "source": "docker-compose.yml#diun",
-      "command": "Diun internal scheduler",
-      "purpose": "Check pinned container images for upstream updates.",
-      "schedule": {
-        "type": "cron",
-        "expression": "0 8 * * *"
-      },
-      "expected_duration_seconds": 300,
-      "grace_seconds": 3600,
-      "risk": "low",
-      "monitoring": "catalog-only",
-      "notes": "Paused until Diun emits a per-run completion hook."
-    },
-    {
       "id": "recyclarr-trash-sync",
       "name": "Recyclarr TRaSH sync",
       "module": "video",

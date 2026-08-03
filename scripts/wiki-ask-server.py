@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
-"""Ask the wiki — HTTP bridge between the dashboard plugin and a read-only Codex run.
+"""Ask the wiki — HTTP bridge between the dashboard plugin and a read-only agent run.
 
 POST /ask {"question": "...", "thread": [{"question","answer"}, ...]} -> {"id"}
 GET  /ask/<id> -> {"status": "running|done|error", "answer", "elapsed"}
 GET  /health -> {"ok": true}
 
-Read-only by construction: codex runs with --sandbox read-only, so a prompt
-injection or model mistake cannot touch the vault. Bypasses the wiki-agent
-run lock on purpose — answering writes nothing, so it never conflicts.
+Answering writes nothing, so this bypasses the wiki-agent run lock on purpose —
+it never conflicts. Both runners enforce that in the kernel: codex through
+--sandbox read-only, opencode through the seatbelt profile applied by
+scripts/wiki-opencode.sh, which also confines reads to the vault. The
+wiki-ask agent additionally denies the edit tool, so a write is refused twice.
 
 Every route except /health requires `Authorization: Bearer $WIKI_ASK_TOKEN`,
 and the token is mandatory — the server will not start without one. Anyone who
@@ -33,13 +35,15 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from wiki_usage import WikiUsage
+from wiki_usage import CODEX, OPENCODE, WikiUsage
 
 HOMELAB = Path(os.environ.get("HOMELAB") or Path.home() / "homelab")
 VAULT = Path(os.environ.get("WIKI_VAULT", str(HOMELAB / "config" / "wiki-vault")))
 SKILL = HOMELAB / "config" / "wiki-agent" / "skills" / "answer-question.md"
 POLICY = HOMELAB / "config" / "wiki-agent" / "skills" / "untrusted-content-policy.md"
 CODEX_HOME = HOMELAB / "config" / "wiki-agent" / "codex-home"
+OPENCODE_CONFIG = HOMELAB / "config" / "wiki-agent" / "opencode" / "opencode.json"
+OPENCODE_WRAPPER = HOMELAB / "scripts" / "wiki-opencode.sh"
 PORT = 8799
 DEFAULT_HOST = "127.0.0.1"
 MAX_THREAD_TURNS = 4
@@ -69,6 +73,13 @@ def load_env():
 
 ENV_FILE = load_env()
 MODEL = ENV_FILE.get("WIKI_MODEL_SYNTH", "gpt-5.4-mini")
+KNOWN_RUNNERS = (CODEX, OPENCODE)
+# WIKI_AGENT_CMD is a stdin contract with no way to hand an answer back, so a
+# custom runner cannot drive Ask. Falling back keeps questions working instead
+# of failing every request on an unknown name.
+REQUESTED_RUNNER = ENV_FILE.get("WIKI_AGENT_RUNNER", CODEX)
+RUNNER = REQUESTED_RUNNER if REQUESTED_RUNNER in KNOWN_RUNNERS else CODEX
+LLM_PROVIDER = ENV_FILE.get("WIKI_LLM_PROVIDER", "openai")
 API_KEY = ENV_FILE.get("WIKI_OPENAI_API_KEY") or ENV_FILE.get("KARAKEEP_OPENAI_API_KEY", "")
 USAGE = WikiUsage(ENV_FILE)
 HOST = ENV_FILE.get("WIKI_ASK_HOST", DEFAULT_HOST)
@@ -97,35 +108,94 @@ def build_prompt(question, thread):
     )
 
 
+def agent_command(prompt, output_path):
+    return {
+        CODEX: [
+            "codex",
+            "--ask-for-approval", "never",
+            "-c", "sandbox_workspace_write.network_access=false",
+            "-c", 'web_search="disabled"',
+            "exec",
+            "-C", str(VAULT),
+            "--model", MODEL,
+            "--sandbox", "read-only",
+            "--ephemeral",
+            "--skip-git-repo-check",
+            "--json",
+            "--output-last-message", output_path,
+            prompt,
+        ],
+        # Goes through the wrapper rather than calling opencode directly, so
+        # Ask runs under the same seatbelt profile as the scheduled skills.
+        OPENCODE: [
+            str(OPENCODE_WRAPPER),
+            "wiki-ask",
+            f"{LLM_PROVIDER}/{MODEL}",
+        ],
+    }[RUNNER]
+
+
+def agent_stdin(prompt):
+    # The wrapper takes the prompt on stdin; codex takes it in argv and would
+    # hang on an open pipe it never reads.
+    return {CODEX: None, OPENCODE: prompt}[RUNNER]
+
+
+def agent_env():
+    return {
+        "HOME": str(Path.home()),
+        "PATH": "/usr/local/bin:/usr/bin:/bin",
+        "OPENAI_API_KEY": API_KEY,
+        **{
+            CODEX: {"CODEX_HOME": str(CODEX_HOME)},
+            OPENCODE: {
+                "OPENCODE_CONFIG": str(OPENCODE_CONFIG),
+                "HOMELAB": str(HOMELAB),
+                "WIKI_VAULT": str(VAULT),
+            },
+        }[RUNNER],
+    }
+
+
+def last_text_part(stdout):
+    text = ""
+    for line in stdout.splitlines():
+        try:
+            item = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        part = item.get("part") or {}
+        if item.get("type") == "text" and part.get("text"):
+            text = part["text"]
+    return text.strip()
+
+
+def answer_text(stdout, output_path):
+    # Codex writes the final message to a file it is told to use; opencode only
+    # streams it, so the answer is the last text part in the event log.
+    return {
+        CODEX: lambda: Path(output_path).read_text().strip(),
+        OPENCODE: lambda: last_text_part(stdout),
+    }[RUNNER]()
+
+
 def run_job(job_id, question, thread):
     started = time.time()
     with tempfile.NamedTemporaryFile(mode="r", suffix=".md", delete=False) as last_message:
         output_path = last_message.name
-    command = [
-        "codex",
-        "--ask-for-approval", "never",
-        "-c", "sandbox_workspace_write.network_access=false",
-        "-c", 'web_search="disabled"',
-        "exec",
-        "-C", str(VAULT),
-        "--model", MODEL,
-        "--sandbox", "read-only",
-        "--ephemeral",
-        "--skip-git-repo-check",
-        "--json",
-        "--output-last-message", output_path,
-        build_prompt(question, thread),
-    ]
-    run_env = {
-        "HOME": str(Path.home()),
-        "PATH": "/usr/local/bin:/usr/bin:/bin",
-        "CODEX_HOME": str(CODEX_HOME),
-        "OPENAI_API_KEY": API_KEY,
-    }
+    prompt = build_prompt(question, thread)
+    command = agent_command(prompt, output_path)
+    stdin_text = agent_stdin(prompt)
     try:
         result = subprocess.run(
             command,
-            env=run_env,
+            env=agent_env(),
+            cwd=str(VAULT),
+            # A daemon inherits whatever stdin launchd gave it. codex never
+            # reads stdin, and opencode blocks until EOF, so each runner gets
+            # exactly one of: closed, or the prompt followed by close.
+            input=stdin_text,
+            stdin=None if stdin_text is not None else subprocess.DEVNULL,
             capture_output=True,
             text=True,
             timeout=600,
@@ -134,8 +204,9 @@ def run_job(job_id, question, thread):
         partial = error.stdout or ""
         if isinstance(partial, bytes):
             partial = partial.decode(errors="replace")
-        recorded = USAGE.record_codex_output(
+        recorded = USAGE.record_agent_output(
             partial,
+            runner=RUNNER,
             kind="ask",
             model=MODEL,
             status="timed-out",
@@ -149,16 +220,18 @@ def run_job(job_id, question, thread):
                 status="timed-out",
                 error=str(error),
                 run_id=f"ask:{job_id}",
+                runner=RUNNER,
             )
         Path(output_path).unlink(missing_ok=True)
         raise
-    recorded = USAGE.record_codex_output(
+    recorded = USAGE.record_agent_output(
         result.stdout,
+        runner=RUNNER,
         kind="ask",
         model=MODEL,
         status="completed" if result.returncode == 0 else "failed",
         run_id=f"ask:{job_id}",
-        error=(result.stderr or USAGE.error_from_codex_json(result.stdout))
+        error=(result.stderr or USAGE.error_from_agent_json(result.stdout))
         if result.returncode != 0 else "",
     )
     if not recorded and result.returncode != 0:
@@ -166,12 +239,13 @@ def run_job(job_id, question, thread):
             kind="ask",
             model=MODEL,
             status="failed",
-            error=result.stderr or USAGE.error_from_codex_json(result.stdout),
+            error=result.stderr or USAGE.error_from_agent_json(result.stdout),
             run_id=f"ask:{job_id}",
+            runner=RUNNER,
         )
     elif not recorded:
         print(f"wiki usage: no token totals for ask:{job_id}", flush=True)
-    answer = Path(output_path).read_text().strip()
+    answer = answer_text(result.stdout, output_path)
     Path(output_path).unlink(missing_ok=True)
     ok = result.returncode == 0 and answer
     with jobs_lock:
@@ -179,7 +253,7 @@ def run_job(job_id, question, thread):
             "status": "done" if ok else "error",
             "answer": answer if ok else "",
             "error": "" if ok else USAGE.sanitize_error(
-                result.stderr or USAGE.error_from_codex_json(result.stdout)
+                result.stderr or USAGE.error_from_agent_json(result.stdout)
             )[-500:],
             "elapsed": round(time.time() - started, 1),
             "created": jobs[job_id]["created"],
@@ -308,6 +382,7 @@ class Handler(BaseHTTPRequestHandler):
             run_job(job_id, question, thread)
         except Exception as error:
             USAGE.record_failure(
+                runner=RUNNER,
                 kind="ask",
                 model=MODEL,
                 status="failed",
@@ -334,7 +409,15 @@ def main():
             "`openssl rand -hex 32`, put it in .env, and copy it into the "
             "vault's system/schema/ask.json as \"token\""
         )
-    print(f"wiki ask server on {HOST}:{PORT} (token auth enabled)", flush=True)
+    REQUESTED_RUNNER == RUNNER or print(
+        f"wiki ask: WIKI_AGENT_RUNNER={REQUESTED_RUNNER} cannot answer questions; "
+        f"falling back to {RUNNER}",
+        flush=True,
+    )
+    print(
+        f"wiki ask server on {HOST}:{PORT} (token auth enabled, runner {RUNNER})",
+        flush=True,
+    )
     ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()
 
 

@@ -54,8 +54,7 @@ Telegram budget digest.
 **Monitoring.** Healthchecks as the scheduled-job catalog and execution
 dashboard. Uptime Kuma for service and endpoint checks. Beszel (hub plus local
 agent over a Unix socket) for host and container metrics. Dozzle for live
-container logs. Diun to notify when pinned images have upstream releases.
-Homepage as the front door.
+container logs. Homepage as the front door.
 
 **Infrastructure.** Caddy, built with the Porkbun DNS plugin, terminating HTTPS
 for every service. gluetun holding a WireGuard tunnel that qBittorrent,
@@ -110,8 +109,8 @@ socket and cannot run anything. Jobs whose scheduler emits no per-run
 completion hook are registered `catalog-only` and created paused, because
 showing them green would be a lie.
 
-**Images are pinned.** Every service pins a tag or a digest. Diun watches for
-upstream releases and tells you; nothing auto-pulls. Trivy scans what is
+**Images are pinned.** Every service pins a tag or a digest. Nothing
+auto-pulls; review updates during planned maintenance. Trivy scans what is
 actually running once a week.
 
 ## Requirements
@@ -129,8 +128,8 @@ actually running once a week.
   a few environment variables.
 - Optional: an OpenAI API key, for Karakeep's AI tagging and the wiki agent,
   transcription, and ask features.
-- Optional: a Telegram bot and a forum-style group, for backup, scan, finance,
-  and image-update notifications.
+- Optional: a Telegram bot and a forum-style group, for backup, scan, and
+  finance notifications.
 
 ## Get started
 
@@ -158,8 +157,8 @@ running `docker compose up` and working backwards.
   pauses the checks of anything switched off rather than leaving them to alert.
 - **Telegram routing.** The stack assumes one bot posting into a forum-style
   supergroup with a closed General topic, so every message carries a thread id.
-  Set them in `.env`: `TELEGRAM_TOPIC_TRIVY`, `TELEGRAM_TOPIC_DIUN`,
-  `TELEGRAM_TOPIC_BACKUP`, `TELEGRAM_TOPIC_SYSTEM`, `TELEGRAM_TOPIC_FINANCE`.
+  Set them in `.env`: `TELEGRAM_TOPIC_TRIVY`, `TELEGRAM_TOPIC_BACKUP`,
+  `TELEGRAM_TOPIC_SYSTEM`, `TELEGRAM_TOPIC_FINANCE`.
   Leave them unset to post to General, or point them all at one topic.
 - **Locale-shaped defaults.** Paperless OCR languages, the Ghostfolio sync
   currency, the registry timezone in `jobs/jobs.json`, and the subtitle

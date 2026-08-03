@@ -51,7 +51,7 @@ reverse-proxying `couchdb:5984`. Nothing here is meant to be publicly reachable;
 the assumption throughout is a private network or a mesh VPN.
 
 Everything with a schedule runs on the **host**, not in a container, because the
-agent needs Homebrew tools (`codex`, `yt-dlp`, `ffmpeg`, `pandoc`) and direct
+agent needs host tools (`codex` or `opencode`, `yt-dlp`, `ffmpeg`, `pandoc`) and direct
 filesystem access to the vault. The host scripts:
 
 | Script | Role |
@@ -193,6 +193,22 @@ nothing, the wrapper reports an idle heartbeat and exits 0.
 Note what the gate does *not* do: there is no `modified > enrichedAt`
 comparison. A note edited after enrichment never re-triggers enrichment.
 
+For `enrich-note` and `ingest-inbox` the gate's file list is also handed to the
+model as the run scope, and the skill is told not to search for pending work
+itself. Discovery belongs in the gate, which computes it exactly and for free.
+Left to the model it is a set difference between "every file" and "files
+containing `enrichedAt:`" — cheap with a shell, but a runner with no shell has
+to derive it across two tool results, and a small model gets it wrong *silently*:
+it reports nothing pending, logs that it made no changes, and exits 0, so the
+run looks healthy while the backlog never drains.
+
+The list is capped at `WIKI_GATE_LIMIT` (25) paths, since it is prepended to
+every prompt and a first run over an unenriched vault would otherwise pay to
+resend the whole backlog on each invocation. The overflow is counted, not
+listed, and picked up by the next run. The paths themselves come from ingested
+material and are labelled as filenames rather than instructions — the run scope
+bounds the work, it does not grant trust.
+
 **ingest-inbox** is the substantial one. For each inbox file it either processes
 the raw source a pointer note references (then deletes the pointer), moves a
 clipped page's body into `system/raw/YYYY/`, files a human-written note into
@@ -285,15 +301,108 @@ been billed. Create that heading when you scaffold the vault.
 
 ### Swapping the agent CLI
 
-Codex is the default and the only runner whose flags the wrapper knows. Set
-`WIKI_AGENT_RUNNER` to anything else and you must also supply
-`WIKI_AGENT_CMD`: a command line that receives the composed prompt on stdin and
-runs with the vault as its working directory. A custom runner owns its own model
-selection, sandboxing, and approval policy — the wrapper's Codex-specific
-hardening flags do not apply to it. The rest of the pipeline (gating, lock,
-usage recording, hierarchy sync, commit, heartbeat) is unchanged. Usage
-accounting assumes Codex's `--json` stream, so a custom runner that emits
-something else records no token totals.
+`WIKI_AGENT_RUNNER` selects the agent CLI. Two values are understood by the
+wrapper and the Ask server; anything else is a custom runner.
+
+**`codex`** (default) is described above.
+
+**`opencode`** runs `opencode run --agent wiki-skill --format json`, reading its
+configuration from `config/wiki-agent/opencode/opencode.json` via
+`OPENCODE_CONFIG`. That file is the sandbox. It denies `bash`, `webfetch`, and
+`external_directory` globally — so the agent has no shell, no network fetch, and
+no file access outside the vault — and defines two agents that differ only in
+whether they may write: `wiki-skill` (`edit: allow`) for the four skills, and
+`wiki-ask` (`edit: deny`) for the Ask server, which is the read-only guarantee
+Codex gets from `--sandbox read-only`. The config is mounted read-only in
+containerised setups and is never writable by the agent, so a compromised run
+cannot widen its own permissions.
+
+The permission map is enforced by opencode itself, so it is only as good as
+opencode's own path checking. Underneath it, `scripts/wiki-opencode.sh` runs
+every invocation under a seatbelt profile
+(`config/wiki-agent/opencode/sandbox.sb`) applied with `sandbox-exec`. Both
+callers go through that wrapper — the scheduled skills and the Ask server — so
+the confinement cannot be present at one call site and missing at the other.
+
+The profile denies everything by default and then grants what a run genuinely
+needs: the vault (read and write), the skill prompts and the permission map
+(read only, so a run cannot rewrite the rules it is running under), opencode's
+own binary and its four state directories, and outbound network for the model
+call. Everything else is refused by the kernel. `.env`, `~/.ssh`, the codex auth file
+and every other repository on the machine are unreachable regardless of what
+the model is talked into attempting. `scripts/test-sandbox-profile.sh` asserts
+each of those denials against the real profile with real syscalls; it costs
+nothing and calls no model. Run it after touching the profile — the first
+version of this shipped with three grants that readmitted what it was meant to
+exclude, and the test is what would have caught them.
+
+That distinction matters because the two layers fail differently. The
+permission map governs *which tools the model may call*; the profile governs
+*what the process can touch*. Verified by allowing `bash` outright and
+instructing the model to read `.env`: it called the tool, and the kernel
+refused. Without the profile that same read succeeds, because an allowed `grep`
+or `cat` runs with full user privileges and is not confined to the vault.
+
+The profile confines paths, not execution: `process-exec` is unfiltered, so any
+system binary still runs inside it. What changes is that none of them can reach
+anything outside the grants above. Two holes worth knowing about, because both
+were live in the first version: a bare `(allow network-outbound)` also permits
+AF_UNIX connects, which on this host reaches Colima's `docker.sock` and is
+therefore host root — the grant is now filtered by address family, with
+mDNSResponder's socket named explicitly because DNS needs it. And opencode
+auto-executes JavaScript from `~/.config/opencode/plugins` and
+`<cwd>/.opencode/plugins`, so both are denied for writing; the second sits
+inside the writable vault and was reachable with nothing but the `edit` tool.
+
+Two consequences worth knowing. File *metadata* is readable everywhere while
+file *contents* are not: reaching any permitted path requires stat on each
+ancestor, and enumerating those individually would break whenever a path moved.
+The defended property is confidentiality of contents, not concealment of the
+directory tree. And the API key is passed to opencode in its environment, which no filesystem
+policy can hide from the process that needs it — the profile stops the agent
+reading *other* secrets, not the one it was given. That is why the wrapper
+builds the environment with `env -i` rather than inheriting: `wiki-agent.sh`
+does `set -a; source .env`, which would otherwise hand every one of that file's
+65 keys to the model's process while the file itself sat unreadable.
+
+The wrapper also raises the file-descriptor soft limit. macOS defaults it to
+256 and launchd gives daemons the same; over the limit bun aborts with a
+misleading "low max file descriptors" error rather than degrading, and how many
+descriptors a run needs scales with how many files the skill touches.
+
+Model ids are provider-qualified (`openai/gpt-5.4-nano`). `WIKI_LLM_PROVIDER`
+supplies the prefix and is the single value to change when moving to another
+OpenAI-compatible endpoint; the endpoint URL goes in the `provider` block of
+`opencode.json`. **Never put a key there.** `opencode.json` is git-tracked and
+exported to the public template repo — put the key in `.env` and reference it
+as `"apiKey": "{env:WIKI_OPENAI_API_KEY}"`, which opencode expands at load.
+Nothing else in `config/wiki-agent/opencode/` is tracked, so opencode's own
+`auth.json` stays local.
+
+`wiki-agent.sh` refuses to start if the permission map is missing, unparseable,
+or no longer denies `bash`, `webfetch` and `external_directory`. Without that
+check opencode falls back to permissive built-in defaults and `--auto` approves
+them, which would hand an injected note a shell while the run still reported
+success.
+
+Two behaviours differ enough to matter. `opencode run` **reads stdin even when
+the prompt is an argument** and blocks until EOF, so every invocation must close
+it — the wrapper does this with `$(cat)`, the Ask server with
+`stdin=DEVNULL`. And opencode has no equivalent of Codex's
+`--output-last-message`, so the Ask server recovers the answer from the last
+text event in the JSON stream instead of from a file.
+
+**Any other value** requires `WIKI_AGENT_CMD`: a command line that receives the
+composed prompt on stdin and runs with the vault as its working directory. A
+custom runner owns its own model selection, sandboxing, and approval policy —
+none of the hardening above applies to it. The rest of the pipeline (gating,
+lock, usage recording, hierarchy sync, commit, heartbeat) is unchanged. Usage
+accounting understands the Codex and opencode JSON streams only, so a custom
+runner that emits something else records no token totals rather than
+misattributing someone else's schema.
+
+Switching runner switches the Ask server too. Restart it after changing the
+value: `launchctl kickstart -k gui/$(id -u)/com.homelab.wiki-ask`.
 
 ## Security model
 
@@ -475,8 +584,10 @@ All keys live in `.env`; `.env.example` carries placeholders.
 | `WIKI_MODEL_ENRICH` | no | default `gpt-5.4-nano` |
 | `WIKI_MODEL_SYNTH` | no | default `gpt-5.4-mini`; also the Ask model |
 | `WIKI_MODEL_LINT` | no | default `gpt-5.1` |
-| `WIKI_AGENT_RUNNER` | no | default `codex`; any other value requires `WIKI_AGENT_CMD` |
+| `WIKI_AGENT_RUNNER` | no | default `codex`; `opencode` is also understood, anything else requires `WIKI_AGENT_CMD` |
 | `WIKI_AGENT_CMD` | with a custom runner | command line receiving the prompt on stdin |
+| `WIKI_LLM_PROVIDER` | no | opencode model-id prefix, default `openai` |
+| `WIKI_GATE_LIMIT` | no | max pending paths named in the prompt, default 25 |
 | `WIKI_SETTLE` | no | pre-run settle seconds, default 180 |
 | `WIKI_COUCHDB_URL`, `WIKI_COUCHDB_DB` | no | plugin publisher target; defaults `http://127.0.0.1:5984` and `wiki` |
 | `WIKI_TEMPLATE_PLUGIN_ID` | first publish under a new id | donor plugin id for the profile document shape |
@@ -557,7 +668,8 @@ long-lived daemon, not a scheduled job, so it has no registry entry.
    will need `WIKI_TEMPLATE_PLUGIN_ID` pointed at a plugin id that already has a
    profile document.
 
-6. **Install the host tooling.** `brew install codex yt-dlp ffmpeg pandoc`, fill
+6. **Install the host tooling.** `brew install codex yt-dlp ffmpeg pandoc` (or
+   `npm i -g opencode-ai@<version>` instead of `codex` for that runner), fill
    in the remaining `.env` keys, then run each script once by hand:
    `scripts/wiki-karakeep-pull.sh`, then `scripts/wiki-agent.sh ingest-inbox`,
    then `enrich-note`, `refresh-moc`, and `lint-wiki`. Read the resulting vault
@@ -603,7 +715,29 @@ event per run with token counts, computed cost, and the savings attributable to
 cached input. Failures are recorded even when a run produced no token totals, so
 a credit exhaustion or an API outage shows up rather than vanishing; unresolved
 failures persist across month boundaries until a successful run of the same kind
-clears them. Everything here is local — metering a run costs no network request.
+clears them. A run whose usage will not parse is recorded too, as a `-error`
+event carrying the reason: a completed run that silently left no ledger entry
+would show as zero spend forever. Everything here is local — metering a run
+costs no network request.
+
+The two runners report tokens in incompatible shapes, so `wiki_usage.py` has a
+parser per runner and folds opencode's into Codex's before costing. Codex nests:
+`input_tokens` already contains the cached reads and `output_tokens` already
+contains reasoning. opencode reports four disjoint buckets — `input`, `output`,
+`reasoning` and `cache.read` — that sum to `total`, so the fold adds cached back
+into input and reasoning back into output.
+
+That opencode is disjoint is worth stating plainly, because its usage originates
+from the Vercel AI SDK, where `inputTokens` follows OpenAI's `prompt_tokens` and
+*includes* the cached reads. opencode normalizes before emitting rather than
+passing the SDK numbers through, and recomputes `total` from its own buckets: a
+step reporting `input=1447 output=221 reasoning=36 cache.read=5632` gives
+`total=7336`, where forwarding OpenAI's own totals would have given 7300. This
+was verified empirically against opencode 1.18.5 across a 21-step run, not read
+off a documented contract. If a future version passes SDK usage straight
+through, the fold would double-count cached input — roughly a 4× overstatement
+on a cache-heavy run — and nothing would flag it. Re-check that the buckets
+still sum to `total` when upgrading opencode.
 
 The ledger's figures are estimates. With `OPENAI_ADMIN_KEY` set, the Ops drawer
 also fetches authoritative current-month spend from the organization Costs API,

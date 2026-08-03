@@ -1,0 +1,230 @@
+(version 1)
+
+;; Kernel confinement for the wiki agent.
+;;
+;; opencode's permission map is enforced by opencode itself: it decides which
+;; tools the model may call. This profile is the layer underneath — it decides
+;; what the process can touch no matter what opencode does or fails to do. The
+;; prompt is assembled from web pages the system explicitly does not trust, so
+;; the interesting property is that reads are confined to the vault. `.env`,
+;; ssh keys and every other repository are unreachable here even if the tool
+;; layer is bypassed entirely.
+;;
+;; The system-level scaffolding below (sysctls, framework mapping, mach
+;; services) is adapted from the Codex CLI's seatbelt profile, Apache-2.0.
+;; Getting that part wrong does not fail open — it fails to start.
+;;
+;; Parameters (sandbox-exec -D): VAULT SKILLS AGENTCONFIG OCLIB OCSTATE
+;;                               OCLOCALSTATE OCCACHE OCCONFIG USERHOME
+;;                               VAULTPLUGINS
+;;                               USERTEXTENCODING
+
+(deny default)
+
+;; ---------------------------------------------------------------- process --
+(allow process-exec)
+(allow process-fork)
+(allow signal (target same-sandbox))
+(allow process-info* (target same-sandbox))
+(allow sysctl-write (sysctl-name "kern.grade_cputype"))
+(allow system-mac-syscall (mac-policy-name "vnguard"))
+(allow system-mac-syscall
+  (require-all (mac-policy-name "Sandbox") (mac-syscall-number 67)))
+(allow system-fsctl (fsctl-command FSIOC_CAS_BSDFLAGS))
+(allow ipc-posix-sem)
+(allow pseudo-tty)
+
+(allow sysctl-read
+  (sysctl-name "hw.activecpu") (sysctl-name "hw.busfrequency_compat")
+  (sysctl-name "hw.byteorder") (sysctl-name "hw.cacheconfig")
+  (sysctl-name "hw.cachelinesize_compat") (sysctl-name "hw.cpufamily")
+  (sysctl-name "hw.cpufrequency") (sysctl-name "hw.cpufrequency_compat")
+  (sysctl-name "hw.cputype") (sysctl-name "hw.l1dcachesize_compat")
+  (sysctl-name "hw.l1icachesize_compat") (sysctl-name "hw.l2cachesize_compat")
+  (sysctl-name "hw.l3cachesize_compat") (sysctl-name "hw.logicalcpu")
+  (sysctl-name "hw.logicalcpu_max") (sysctl-name "hw.machine")
+  (sysctl-name "hw.memsize") (sysctl-name "hw.model") (sysctl-name "hw.ncpu")
+  (sysctl-name "hw.nperflevels") (sysctl-name "hw.packages")
+  (sysctl-name "hw.pagesize") (sysctl-name "hw.pagesize_compat")
+  (sysctl-name "hw.physicalcpu") (sysctl-name "hw.physicalcpu_max")
+  (sysctl-name "hw.tbfrequency_compat") (sysctl-name "hw.vectorunit")
+  (sysctl-name "machdep.cpu.brand_string") (sysctl-name "kern.argmax")
+  (sysctl-name "kern.hostname") (sysctl-name "kern.maxfilesperproc")
+  (sysctl-name "kern.maxproc") (sysctl-name "kern.osproductversion")
+  (sysctl-name "kern.osrelease") (sysctl-name "kern.ostype")
+  (sysctl-name "kern.osvariant_status") (sysctl-name "kern.osversion")
+  (sysctl-name "kern.secure_kernel") (sysctl-name "kern.usrstack64")
+  (sysctl-name "kern.version") (sysctl-name "sysctl.proc_cputype")
+  (sysctl-name "vm.loadavg") (sysctl-name "kern.bootargs")
+  (sysctl-name "kern.iossupportversion") (sysctl-name "kern.tcsm_available")
+  (sysctl-name "hw.l3cachesize") (sysctl-name "machdep.tsc.frequency")
+  (sysctl-name "security.mac.lockdown_mode_state")
+  (sysctl-name-prefix "hw.optional.") (sysctl-name-prefix "hw.perflevel")
+  (sysctl-name-prefix "kern.proc.pgrp.") (sysctl-name-prefix "kern.proc.pid.")
+  (sysctl-name-prefix "net.routetable."))
+
+;; ------------------------------------------------------------- system r/o --
+;; Required for the process to start at all: dyld maps these, libc reads them.
+(allow file-map-executable
+  (subpath "/Library/Apple/System/Library/Frameworks")
+  (subpath "/Library/Apple/System/Library/PrivateFrameworks")
+  (subpath "/Library/Apple/usr/lib")
+  (subpath "/System/Library/Extensions")
+  (subpath "/System/Library/Frameworks")
+  (subpath "/System/Library/PrivateFrameworks")
+  (subpath "/System/Library/SubFrameworks")
+  (subpath "/usr/lib")
+  (subpath "/usr/local/bin")
+  (subpath "/usr/local/Cellar")
+  (subpath "/usr/local/opt")
+  (subpath "/System/Volumes/Preboot/Cryptexes")
+  (subpath (param "OCLIB")))
+
+(allow file-read* file-test-existence
+  (subpath "/Library/Apple")
+  (subpath "/Library/Filesystems/NetFSPlugins")
+  (subpath "/Library/Preferences")
+  (subpath "/System/Library/Frameworks")
+  (subpath "/System/Library/PrivateFrameworks")
+  (subpath "/System/Library/SubFrameworks")
+  (subpath "/System/Library/CoreServices")
+  (subpath "/private/var/db/timezone")
+  (subpath "/private/var/db/DarwinDirectory")
+  (subpath "/usr/lib")
+  (subpath "/usr/share")
+  (subpath "/var/db")
+  (subpath "/private/var/db")
+  (literal "/private/etc/hosts")
+  (literal "/private/etc/resolv.conf")
+  ;; /etc/resolv.conf is a symlink; the resolver reads through to the target,
+  ;; and granting only the link leaves DNS broken with a bare "couldn't
+  ;; resolve host" and no sandbox denial logged.
+  (literal "/private/var/run/resolv.conf")
+  (subpath "/private/etc/resolver")
+  (literal "/private/etc/services")
+  (literal "/private/etc/protocols")
+  (literal "/private/etc/localtime")
+  (subpath "/private/etc/ssl")
+  (subpath "/usr/local/bin")
+  (subpath "/usr/local/Cellar")
+  (subpath "/usr/local/opt")
+  (subpath "/System/Volumes/Preboot/Cryptexes")
+  (subpath (param "OCLIB"))
+  (literal "/"))
+
+;; Metadata (names, sizes, timestamps) is allowed everywhere; file *contents*
+;; are not. Reaching any permitted path requires stat on each ancestor, so
+;; enumerating them individually would be a long list that breaks whenever a
+;; path moves. The property being defended is confidentiality of file
+;; contents — .env stays unreadable — not concealment of the directory tree.
+(allow file-read-metadata file-test-existence (subpath "/"))
+(allow file-read* (subpath "/System/Cryptexes"))
+
+;; Directories that must be *listed* to resolve paths, granted as literals so
+;; the directory entry is readable while the files inside it are not. USERHOME
+;; as a literal is the difference between "can see that .env exists" and "can
+;; read it"; only the former is permitted.
+(allow file-read*
+  (literal "/Users")
+  (literal "/System")
+  (literal "/System/Volumes")
+  (literal "/System/Volumes/Data")
+  (literal (param "USERHOME"))
+  (literal (param "USERTEXTENCODING"))
+  (subpath "/Library/Developer/CommandLineTools"))
+
+(allow file-read* file-test-existence
+  (literal "/dev/autofs_nowait") (literal "/dev/random") (literal "/dev/urandom"))
+(allow file-read* file-test-existence file-write-data
+  (literal "/dev/null") (literal "/dev/zero"))
+(allow file-read-data file-test-existence file-write-data (subpath "/dev/fd"))
+(allow file-read* file-test-existence file-write-data file-ioctl
+  (literal "/dev/dtracehelper"))
+(allow file-read* file-write* file-ioctl (literal "/dev/ptmx"))
+(allow file-ioctl (regex #"^/dev/ttys[0-9]+"))
+
+(allow iokit-open (iokit-registry-entry-class "RootDomainUserClient"))
+(allow ipc-posix-shm-read* ipc-posix-shm-write*
+  (ipc-posix-name-prefix "apple.cfprefs.")
+  (ipc-posix-name-prefix "apple.shm.")
+  (ipc-posix-name "com.apple.AppleDatabaseChanged"))
+(allow user-preference-read)
+(allow mach-lookup
+  (global-name "com.apple.system.opendirectoryd.libinfo")
+  (global-name "com.apple.analyticsd")
+  (global-name "com.apple.bsd.dirhelper")
+  (global-name "com.apple.cfprefsd.agent")
+  (global-name "com.apple.cfprefsd.daemon")
+  (global-name "com.apple.diagnosticd")
+  (global-name "com.apple.logd")
+  (global-name "com.apple.logd.events")
+  (global-name "com.apple.PowerManagement.control")
+  (global-name "com.apple.runningboard")
+  (global-name "com.apple.SecurityServer")
+  (global-name "com.apple.SystemConfiguration.configd")
+  (global-name "com.apple.trustd")
+  (global-name "com.apple.trustd.agent")
+  (global-name "com.apple.dnssd.service")
+  (global-name "com.apple.system.notification_center")
+  (global-name "com.apple.securityd.xpc")
+  (global-name "com.apple.CoreServices.coreservicesd")
+  (global-name "com.apple.DiskArbitration.diskarbitrationd")
+  (global-name "com.apple.FSEvents")
+  (global-name "com.apple.system.opendirectoryd.membership")
+  (global-name "com.apple.mDNSResponder"))
+(allow mach-lookup (local-name "com.apple.cfprefsd.agent"))
+
+;; --------------------------------------------------------------- network --
+;; The model call, plus the loopback socket opencode's own client/server split
+;; needs. Filtered by address family on purpose: a bare (allow network-outbound)
+;; also permits AF_UNIX connects, and this host runs Colima — reaching
+;; ~/.colima/default/docker.sock is host root, which no file rule can stop
+;; because socket connects are not gated by path. Naming tcp/udp/ip filters
+;; leaves unix sockets unmatched, and unmatched means denied.
+(allow network-outbound
+  (remote tcp "*:443")
+  (remote tcp "*:80")
+  (remote udp "*:53")
+  (remote ip "localhost:*")
+  ;; getaddrinfo talks to mDNSResponder over a UNIX socket, so filtering the
+  ;; address families above also breaks DNS — with no denial logged, just
+  ;; "could not resolve host". This one socket is named explicitly; every other
+  ;; unix path, docker.sock included, stays unmatched and therefore denied.
+  (literal "/private/var/run/mDNSResponder"))
+(allow network-bind (local ip "localhost:*"))
+(allow network-inbound (local ip "localhost:*"))
+(allow system-socket)
+
+;; ------------------------------------------------------------ the vault ----
+;; The work area, and the only user data in the policy.
+(allow file-read* file-test-existence file-write* (subpath (param "VAULT")))
+
+;; The vault is writable, and opencode treats its cwd as a project root — so
+;; <vault>/.opencode/plugins would be auto-executed JS that an injected note
+;; could write with nothing but the edit tool. Denied after the grant above,
+;; because the last matching rule wins.
+(deny file-write* (subpath (param "VAULTPLUGINS")))
+
+;; Prompts and the permission map are inputs. Read-only on purpose: a run must
+;; not be able to rewrite the rules it is running under.
+(allow file-read* file-test-existence (subpath (param "SKILLS")))
+(allow file-read* file-test-existence (subpath (param "AGENTCONFIG")))
+
+;; opencode's own session and cache state. Named individually rather than as
+;; $HOME, which would readmit everything this profile exists to exclude.
+(allow file-read* file-test-existence file-write*
+  (subpath (param "OCSTATE"))
+  (subpath (param "OCLOCALSTATE"))
+  (subpath (param "OCCACHE")))
+
+;; Global config is read-only: opencode auto-loads and executes plugins from
+;; ~/.config/opencode/plugins with no registration step, so write access here
+;; is arbitrary code execution on the next run. The wrapper creates the
+;; directory outside the sandbox, so nothing needs to create it inside.
+(allow file-read* file-test-existence (subpath (param "OCCONFIG")))
+
+;; Scratch.
+(allow file-read* file-test-existence file-write*
+  (subpath "/tmp") (subpath "/private/tmp")
+  (subpath "/var/tmp") (subpath "/private/var/tmp")
+  (subpath "/var/folders") (subpath "/private/var/folders"))

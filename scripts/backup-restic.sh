@@ -92,7 +92,6 @@ SQLITE_SERVICES=(${SELECTED_SERVICES[@]+"${SELECTED_SERVICES[@]}"})
 restart_services() {
   docker compose start "${SQLITE_SERVICES[@]}" >> "${LOG}" 2>&1 || {
     degrade "service restart failed — containers may still be stopped"
-    telegram_alert "service restart failed — containers may still be stopped"
   }
 }
 trap restart_services EXIT
@@ -110,28 +109,21 @@ degrade() {
   DEGRADED+=("$1")
 }
 
-telegram_send() {
-  TG_TOKEN="$(env_value TELEGRAM_BOT_TOKEN)"
-  TG_CHAT="$(env_value TELEGRAM_CHAT_ID)"
-  local text=$1
-  local silent=${2:-false}
-  # Forum topic for backup alerts; they belong with monitoring.
-  TG_TOPIC="$(env_value TELEGRAM_TOPIC_BACKUP)"
-  [ -n "${TG_TOKEN}" ] && curl -s -m 10 "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
-    -d chat_id="${TG_CHAT}" -d message_thread_id="${TG_TOPIC:-1}" \
-    -d disable_notification="${silent}" \
-    -d text="${text}" \
-    >/dev/null 2>&1 || true
-}
-
-telegram_alert() {
-  telegram_send "🚨 ${STACK_NAME} backup FAILED: $1 — see config/backup.log"
-}
-
 fail() {
   echo "$(date '+%Y-%m-%d %H:%M:%S') restic backup FAILED: $1" | tee -a "${LOG}" >&2
+  # Healthchecks is stopped during the cold database snapshot.  Bring it back
+  # before posting the failure, otherwise the only failure signal is lost.
+  restart_services
+  trap - EXIT
+  for attempt in {1..15}; do
+    if curl -fsS -m 2 "${HEALTHCHECKS_BASE_URL:-http://127.0.0.1:8008}/" >/dev/null; then
+      "${HOMELAB}/scripts/kuma-push.sh" KUMA_PUSH_BACKUP down "$1"
+      exit 1
+    fi
+    sleep 2
+  done
+  echo "$(date '+%Y-%m-%d %H:%M:%S') WARNING: Healthchecks unavailable; failure ping could not be sent" >> "${LOG}"
   "${HOMELAB}/scripts/kuma-push.sh" KUMA_PUSH_BACKUP down "$1"
-  telegram_alert "$1"
   exit 1
 }
 
@@ -165,11 +157,11 @@ mirror_to_b2() {
 
   echo "$(date '+%Y-%m-%d %H:%M:%S') backblaze b2 mirror starting" >> "${LOG}"
   run_b2_timed 7200 restic -r "${RESTIC_B2_REPOSITORY}" copy --from-repo "${RESTIC_REPOSITORY}" ||
-    fail "backblaze copy step (failed or timed out)"
+    fail "Backblaze B2 restic copy step (failed or timed out)"
   run_b2_timed 1800 restic -r "${RESTIC_B2_REPOSITORY}" forget --keep-last "${RESTIC_B2_KEEP_LAST}" --prune ||
-    fail "backblaze retention/prune step"
+    fail "Backblaze B2 restic retention/prune step (failed or timed out)"
   run_b2_timed 1800 restic -r "${RESTIC_B2_REPOSITORY}" check ||
-    fail "backblaze integrity check"
+    fail "Backblaze B2 restic integrity check (failed or timed out)"
   echo "$(date '+%Y-%m-%d %H:%M:%S') backblaze b2 mirror ok: keep-last ${RESTIC_B2_KEEP_LAST}" >> "${LOG}"
 }
 
@@ -224,35 +216,26 @@ run_timed 1800 restic backup \
   --exclude "${HOMELAB}/config/adguardhome-host" \
   --exclude "${HOMELAB}/config/_retired" \
   --exclude-caches \
-  "${HOMELAB}" "${CALIBRE_LIBRARY}" || fail "backup step (failed or timed out)"
+  "${HOMELAB}" "${CALIBRE_LIBRARY}" || fail "primary restic backup step (failed or timed out)"
 
 restart_services
 trap - EXIT
 
-run_timed 900 restic forget --keep-daily 7 --keep-weekly 8 --keep-monthly 6 --prune || fail "forget/prune step"
+run_timed 900 restic forget --keep-daily 7 --keep-weekly 8 --keep-monthly 6 --prune ||
+  fail "primary restic retention/prune step (failed or timed out)"
 
-run_timed 900 restic check || fail "integrity check"
+run_timed 900 restic check || fail "primary restic integrity check (failed or timed out)"
 
 mirror_to_b2
 
 SNAPSHOT_COUNT="$(restic snapshots --json | /usr/bin/python3 -c 'import json,sys; print(len(json.load(sys.stdin)), "snapshots")')"
 
-B2_NOTE=""
-[ "${B2_CONFIGURED}" != true ] || B2_NOTE="; Backblaze B2 mirror ok"
-
-# A degraded run is reported as a warning, out loud (not silenced), because the
-# missing pieces are exactly the ones a restore would need.
+# A degraded run carries its warning text into Healthchecks because the missing
+# pieces are exactly the ones a restore would need.
 WARNINGS=""
-ICON="✅"
-STATUS="succeeded"
-SILENT=true
 [ "${#DEGRADED[@]}" -eq 0 ] || {
   WARNINGS="$(printf '\n⚠️ %s' "${DEGRADED[@]}")"
-  ICON="⚠️"
-  STATUS="completed with warnings"
-  SILENT=false
 }
 
 echo "$(date '+%Y-%m-%d %H:%M:%S') restic backup ok: ${SNAPSHOT_COUNT} (${#DEGRADED[@]} degraded steps)" >> "${LOG}"
 "${HOMELAB}/scripts/kuma-push.sh" KUMA_PUSH_BACKUP up "backup ok: ${SNAPSHOT_COUNT}${WARNINGS}"
-telegram_send "${ICON} ${STACK_NAME} backup ${STATUS}: ${SNAPSHOT_COUNT}${B2_NOTE}${WARNINGS}" "${SILENT}"

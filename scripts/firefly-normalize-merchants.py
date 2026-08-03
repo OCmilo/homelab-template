@@ -42,12 +42,37 @@ def group_accounts(patterns, accounts) -> dict[str, list[dict]]:
     return families
 
 
+def exact_account(accounts: list[dict], name: str) -> dict | None:
+    wanted = name.casefold()
+    return next(
+        (account for account in accounts if account["attributes"]["name"].casefold() == wanted),
+        None,
+    )
+
+
 def target_id(firefly: Firefly, canonical: str, members: list[dict], dry_run: bool) -> str | None:
-    survivors = (m["id"] for m in members if m["attributes"]["name"] == canonical)
-    found = next(survivors, None)
+    found = exact_account(members, canonical)
     if found or dry_run:
-        return found
-    return firefly.call("POST", "/accounts", {"name": canonical, "type": EXPENSE})["data"]["id"]
+        return found["id"] if found else None
+
+    # Some canonical names (for example, "Amazon") do not match any of their
+    # variant regexes, so they are absent from `members` even though they
+    # already exist. Refresh before POSTing, and handle a concurrent creator as
+    # well: account creation must be idempotent on both paths.
+    current = firefly.paged("/accounts", {"type": EXPENSE})
+    found = exact_account(current, canonical)
+    if found:
+        return found["id"]
+
+    try:
+        return firefly.call("POST", "/accounts", {"name": canonical, "type": EXPENSE})["data"]["id"]
+    except RuntimeError as exc:
+        if "account name is already in use" not in str(exc).casefold():
+            raise
+        found = exact_account(firefly.paged("/accounts", {"type": EXPENSE}), canonical)
+        if found:
+            return found["id"]
+        raise
 
 
 def pending_moves(firefly: Firefly, account_id: str, destination: str) -> list[dict]:
@@ -115,7 +140,7 @@ def process(firefly: Firefly, families: dict[str, list[dict]], dry_run: bool) ->
     for canonical in sorted(families):
         members = families[canonical]
         destination = target_id(firefly, canonical, members, dry_run)
-        variants = [m for m in members if m["attributes"]["name"] != canonical]
+        variants = [m for m in members if m["attributes"]["name"].casefold() != canonical.casefold()]
         family_moves = [m for variant in variants for m in pending_moves(firefly, variant["id"], destination)]
         apply_moves(firefly, family_moves, dry_run)
         gone = [v for v in variants if drop_if_empty(firefly, v["id"], dry_run)]
@@ -151,4 +176,5 @@ def main() -> None:
         telegram_send(f"🧹 Firefly merchant cleanup: {summary}")
 
 
-main()
+if __name__ == "__main__":
+    main()

@@ -24,7 +24,7 @@ One home per fact. Docs link instead of copying — copies are how drift starts.
 - Environment variables: `.env.example` — every key, placeholders only.
 - Wiki agent behavior: `config/wiki-agent/skills/*` plus the vault's own
   `AGENTS.md`; wiki-system.md describes them, they decide.
-- Machine facts (hostnames, addresses, personal accounts): your `CLAUDE.md`.
+- Machine facts (hostnames, addresses, personal accounts): your `AGENTS.md`.
   Nothing machine-specific belongs in compose, Caddyfile, scripts, or
   `.env.example`.
 

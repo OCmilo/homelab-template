@@ -14,7 +14,7 @@ correct execution boundary:
 - launchd owns host jobs that need Homebrew, iCloud, the macOS filesystem, or
   the user's Colima context;
 - container cron owns the Firefly maintenance jobs;
-- the Ghostfolio sync, Diun, and Recyclarr retain their application-owned
+- the Ghostfolio sync and Recyclarr retain their application-owned
   schedules;
 - repository scripts remain authoritative for job behavior;
 - `jobs/jobs.json` is authoritative for inventory and monitoring metadata.
@@ -32,7 +32,7 @@ short text body.
 
 A `catalog-only` check is deliberately paused. It makes an application-owned
 schedule visible without pretending Healthchecks can see runs that the
-application does not report. Diun and Recyclarr start in this state. A `muted`
+application does not report. Recyclarr starts in this state. A `muted`
 check is also paused, for the different reason that you chose to stop it
 alerting; see "What alerts, and who decides" below.
 
